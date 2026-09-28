@@ -1,0 +1,481 @@
+/* Glass panels: the codex card (in flight) and the pause / settings overlay. */
+
+/* ---------------------------------------------------------------------------------------- */
+/* Codex                                                                                    */
+/* ---------------------------------------------------------------------------------------- */
+
+.fn-codex {
+  position: absolute;
+  right: var(--edge);
+  top: max(15vh, calc(var(--edge) + 24px));
+  /*
+   * ≥ 1280 px wide: 20vw between 290 and 390 px (unchanged). Narrower viewports scale down
+   * proportionally (22.66vw = 290 px at 1280) to a 220 px floor, so at 1024×768 the card takes
+   * ~232 px instead of 290 px of the right side.
+   */
+  width: clamp(220px, min(22.66vw, max(290px, 20vw)), 390px);
+  /* Short viewports: keep clear of the flash lane / hints at the bottom (70vh at ≥ 900 px tall). */
+  max-height: clamp(260px, calc(100vh - 15vh - 150px), 70vh);
+  display: flex;
+  flex-direction: column;
+  text-shadow: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(22px, 0, 0);
+  pointer-events: none;
+  transition: opacity 0.6s var(--ease-soft), transform 0.8s var(--ease-out), border-color 0.4s, visibility 0s linear 0.8s;
+}
+
+.fn-codex.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition: opacity 0.6s var(--ease-soft), transform 0.8s var(--ease-out), border-color 0.4s, visibility 0s;
+}
+
+.fn-codex.is-pinned {
+  border-color: rgba(127, 231, 255, 0.3);
+}
+
+.cx-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 13px 18px 2px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.cx-context {
+  color: var(--fn-accent);
+}
+
+.cx-pin {
+  color: var(--fn-secondary);
+  letter-spacing: 0.2em;
+}
+
+.cx-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 18px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(127, 231, 255, 0.25) transparent;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 10px, #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 10px, #000 calc(100% - 20px), transparent 100%);
+}
+
+.cx-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.cx-scroll::-webkit-scrollbar-thumb {
+  background: rgba(127, 231, 255, 0.25);
+  border-radius: 4px;
+}
+
+.cx-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cx-foot {
+  padding: 8px 18px 11px;
+  border-top: 1px solid var(--fn-line);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--fn-faint);
+}
+
+.cx-titleblock {
+  padding-top: 4px;
+}
+
+.cx-catalog {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.12em;
+  color: var(--fn-secondary);
+}
+
+.cx-title {
+  margin: 3px 0 3px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-name);
+  letter-spacing: 0.05em;
+  line-height: 1.15;
+  color: var(--fn-text-strong);
+}
+
+.cx-fractal {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.cx-formula {
+  margin: 12px 0 4px;
+  padding: 8px 11px;
+  border-radius: 6px;
+  background: rgba(127, 231, 255, 0.05);
+  border: 1px solid rgba(127, 231, 255, 0.13);
+  font-size: var(--fs-label);
+  line-height: 1.55;
+  color: var(--fn-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cx-stats {
+  display: grid;
+  /* Three columns when there is room; a narrow card wraps the third stat onto a second row. */
+  grid-template-columns: repeat(auto-fit, minmax(max(62px, 30%), 1fr));
+  gap: 8px;
+  margin: 12px 0 10px;
+  padding: 9px 0;
+  border-top: 1px solid rgba(160, 220, 255, 0.08);
+  border-bottom: 1px solid rgba(160, 220, 255, 0.08);
+}
+
+.cx-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cx-stat .cx-k {
+  letter-spacing: 0.16em;
+}
+
+.cx-v {
+  font-size: var(--fs-micro);
+  color: var(--fn-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cx-meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: baseline;
+  margin: 0 0 12px;
+}
+
+.cx-meta dt {
+  letter-spacing: 0.16em;
+}
+
+.cx-meta dd {
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: rgba(225, 238, 255, 0.78);
+}
+
+.cx-summary {
+  margin: 0 0 4px;
+  font-size: calc(var(--fs-body) * 0.95);
+  font-weight: 350;
+  line-height: 1.6;
+  color: var(--fn-text);
+}
+
+.cx-sec {
+  margin-top: 16px;
+}
+
+.cx-sec-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.cx-sec-title::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(127, 231, 255, 0.25), rgba(127, 231, 255, 0));
+}
+
+.cx-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cx-list li {
+  position: relative;
+  padding-left: 15px;
+  font-size: var(--fs-label);
+  line-height: 1.52;
+  color: rgba(225, 238, 255, 0.82);
+}
+
+.cx-list li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border: 1px solid rgba(127, 231, 255, 0.7);
+  transform: rotate(45deg);
+  transition: background 0.8s, box-shadow 0.8s;
+}
+
+.cx-list--facts li {
+  color: rgba(225, 238, 255, 0.5);
+  transition: color 0.9s var(--ease-soft);
+}
+
+.cx-list--facts li.is-on {
+  color: var(--fn-text-strong);
+}
+
+.cx-list--facts li.is-on::before {
+  background: var(--fn-accent);
+  box-shadow: 0 0 8px rgba(127, 231, 255, 0.8);
+}
+
+.cx-physics .cx-sec-title {
+  color: var(--fn-warn);
+}
+
+.cx-physics .cx-sec-title::after {
+  background: linear-gradient(90deg, rgba(255, 179, 71, 0.3), rgba(255, 179, 71, 0));
+}
+
+.cx-physics li::before {
+  border-color: rgba(255, 179, 71, 0.8);
+}
+
+.cx-music {
+  display: flex;
+  gap: 9px;
+  margin: 18px 0 4px;
+  font-style: italic;
+  font-weight: 350;
+  font-size: var(--fs-label);
+  line-height: 1.55;
+  color: var(--fn-secondary);
+}
+
+.cx-note {
+  font-style: normal;
+  color: var(--fn-accent);
+  text-shadow: var(--fn-glow);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Pause overlay                                                                            */
+/* ---------------------------------------------------------------------------------------- */
+
+.fn-pause {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: var(--edge);
+  box-sizing: border-box;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at 50% 45%, rgba(4, 8, 18, 0.35), rgba(2, 4, 10, 0.68));
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  backdrop-filter: blur(12px) saturate(1.1);
+  opacity: 0;
+  transition: opacity 0.45s var(--ease-soft);
+}
+
+.fn-pause.is-open {
+  opacity: 1;
+}
+
+.ps-card {
+  width: min(1000px, 100%);
+  max-height: calc(100vh - 2 * var(--edge));
+  overflow: auto;
+  box-sizing: border-box;
+  padding: clamp(18px, 2.2vw, 38px);
+  transform: translateY(12px) scale(0.985);
+  transition: transform 0.6s var(--ease-out);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(127, 231, 255, 0.25) transparent;
+}
+
+.fn-pause.is-open .ps-card {
+  transform: none;
+}
+
+.ps-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--fn-line);
+}
+
+.ps-kicker {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.ps-title {
+  margin: 6px 0 6px;
+  font-family: var(--font-ui);
+  font-weight: 300;
+  font-size: clamp(34px, calc(3.4 * var(--u)), 68px);
+  line-height: 1;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-text-strong);
+  text-shadow: 0 0 22px rgba(127, 231, 255, 0.35);
+}
+
+.ps-sub {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--fn-secondary);
+}
+
+/* Pointer re-capture feedback (engaging… / refused, try again). */
+.ps-status {
+  margin: 10px 0 0;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.ps-status:empty {
+  display: none;
+}
+
+.ps-status[data-state='failed'] {
+  color: var(--fn-warn);
+}
+
+.ps-resume {
+  flex: none;
+  gap: 1em;
+}
+
+.ps-resume-hint {
+  padding: 3px 7px;
+  border: 1px solid var(--fn-line-strong);
+  border-radius: 4px;
+  font-size: 0.58em;
+  letter-spacing: 0.14em;
+  color: var(--fn-secondary);
+  text-shadow: none;
+}
+
+.ps-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(22px, 3.2vw, 56px);
+  padding-top: 20px;
+}
+
+.ps-col-title {
+  margin-bottom: 10px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.ps-row {
+  display: grid;
+  grid-template-columns: minmax(8.5em, 1fr) minmax(0, 1.35fr) 4.4em;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(160, 220, 255, 0.07);
+  cursor: pointer;
+}
+
+.ps-row--stack {
+  grid-template-columns: 1fr;
+  gap: 9px;
+  cursor: default;
+}
+
+.ps-note {
+  font-size: var(--fs-micro);
+  color: var(--fn-faint);
+}
+
+.ps-row .switch {
+  justify-self: start;
+}
+
+.ps-value {
+  font-size: var(--fs-micro);
+  color: var(--fn-text);
+  text-align: right;
+}
+
+.ps-controls .ctl-list {
+  row-gap: 9px;
+}
+
+.ps-controls .ctl-row .kcs {
+  justify-self: start;
+}
+
+.ps-foot {
+  margin-top: 20px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--fn-faint);
+}
+
+@media (max-width: 860px) {
+  .ps-body {
+    grid-template-columns: 1fr;
+  }
+  .ps-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

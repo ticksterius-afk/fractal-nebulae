@@ -1,0 +1,379 @@
+/* Start screen — over the live attract-mode render. */
+
+.fn-start {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  pointer-events: auto;
+  color: var(--fn-text);
+  transform-origin: 50% 45%;
+  transition: opacity 1.1s var(--ease-soft), transform 1.4s var(--ease-soft);
+}
+
+.fn-start.is-out {
+  opacity: 0;
+  transform: scale(1.045);
+  pointer-events: none;
+}
+
+/* Darken the edges only: the fractal universe shows through the centre. */
+.st-veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 72% 62% at 50% 44%, rgba(2, 4, 12, 0) 0%, rgba(2, 4, 12, 0.22) 42%, rgba(1, 2, 8, 0.72) 78%, rgba(0, 0, 4, 0.93) 100%),
+    linear-gradient(180deg, rgba(0, 0, 6, 0.5) 0%, rgba(0, 0, 6, 0) 20%, rgba(0, 0, 6, 0) 60%, rgba(0, 0, 6, 0.78) 100%);
+}
+
+.st-center {
+  position: relative;
+  align-self: center;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: min(1120px, 92vw);
+  padding: var(--edge) var(--edge) 0;
+  box-sizing: border-box;
+}
+
+.st-center > * {
+  animation: st-in 1.4s var(--ease-out) backwards;
+}
+.st-center > :nth-child(1) { animation-delay: 0.1s; }
+.st-center > :nth-child(2) { animation-delay: 0.25s; }
+.st-center > :nth-child(3) { animation-delay: 0.55s; }
+.st-center > :nth-child(4) { animation-delay: 0.7s; }
+.st-center > :nth-child(5) { animation-delay: 0.9s; }
+.st-center > :nth-child(6) { animation-delay: 1.1s; }
+.st-center > :nth-child(7) { animation-delay: 1.25s; }
+
+@keyframes st-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.st-kicker {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+  padding-left: 0.42em;
+}
+
+/* Title: gradient shimmer text over a breathing glow copy (both in one grid cell). */
+.st-title {
+  display: inline-grid;
+  margin: 0.32em 0 0;
+  font-family: var(--font-ui);
+  font-weight: 300;
+  font-size: clamp(38px, calc(5.6 * var(--u)), 156px);
+  line-height: 1.05;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.st-title > span {
+  grid-area: 1 / 1;
+  padding-left: 0.3em; /* optically re-centre letter-spaced text */
+}
+
+.st-title-glow {
+  color: transparent;
+  text-shadow: 0 0 22px rgba(127, 231, 255, 0.55), 0 0 64px rgba(120, 150, 255, 0.35);
+  animation: st-breathe 7s ease-in-out infinite;
+}
+
+.st-title-text {
+  background: linear-gradient(100deg, #b9e3ff 0%, #ffffff 16%, #9feaff 32%, #eadcff 50%, #ffffff 66%, #a6e8ff 82%, #d6ecff 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: st-shimmer 16s ease-in-out infinite alternate;
+}
+
+@keyframes st-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes st-shimmer {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+.st-rule {
+  width: clamp(120px, 20vw, 420px);
+  height: 1px;
+  margin: clamp(10px, 1.6vh, 22px) 0;
+  background: linear-gradient(90deg, rgba(127, 231, 255, 0), rgba(127, 231, 255, 0.75), rgba(127, 231, 255, 0));
+  box-shadow: 0 0 12px rgba(127, 231, 255, 0.45);
+}
+
+.st-sub {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-weight: 400;
+  font-size: calc(var(--fs-label) * 1.25);
+  letter-spacing: 0.5em;
+  padding-left: 0.5em;
+  text-transform: uppercase;
+  color: var(--fn-text);
+  text-shadow: var(--fn-glow);
+}
+
+.st-poem {
+  max-width: 46ch;
+  margin: clamp(10px, 1.6vh, 20px) 0 0;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-weight: 300;
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  color: var(--fn-secondary);
+}
+
+.st-quality {
+  width: min(780px, 100%);
+  margin-top: clamp(22px, 4.2vh, 56px);
+}
+
+.st-section-label {
+  margin-bottom: 10px;
+}
+
+.seg--cards .seg-face {
+  padding: 0.75em 0.9em;
+  text-align: left;
+}
+
+.st-launch-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: clamp(20px, 3.6vh, 46px);
+}
+
+.st-load {
+  width: min(440px, 80vw);
+  transition: opacity 0.8s var(--ease-soft);
+}
+
+.st-load-track {
+  position: relative;
+  height: 1px;
+  background: rgba(160, 220, 255, 0.14);
+  overflow: hidden;
+}
+
+.st-load-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, rgba(127, 231, 255, 0.15), #7fe7ff 80%, #ffffff);
+  box-shadow: 0 0 10px rgba(127, 231, 255, 0.8);
+  transition: transform 0.5s var(--ease-out);
+}
+
+.st-load-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+.st-load-pct {
+  letter-spacing: 0.04em;
+  color: var(--fn-text);
+}
+
+.fn-start.is-error .st-load-text {
+  color: var(--fn-danger);
+}
+
+.fn-start.is-ready .st-load {
+  opacity: 0.62;
+}
+
+.st-launch {
+  min-width: 13em;
+}
+
+.st-launch-ico {
+  width: 1.1em;
+  height: 1.1em;
+  transition: transform 0.3s var(--ease-out);
+}
+
+.st-launch:hover:not(:disabled) .st-launch-ico {
+  transform: translateX(4px);
+}
+
+/* Expanding ring once the drive is ready (compositor-only animation). */
+.st-launch::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid rgba(127, 231, 255, 0.6);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.fn-start.is-ready .st-launch::after {
+  animation: st-ring 3s var(--ease-out) infinite;
+}
+
+@keyframes st-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.14, 1.55);
+  }
+}
+
+.st-enter {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-faint);
+  opacity: 0;
+  transition: opacity 0.8s var(--ease-soft);
+}
+
+.fn-start.is-ready .st-enter {
+  opacity: 1;
+}
+
+/* Footer */
+.st-foot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: clamp(16px, 3vh, 36px) var(--edge) calc(var(--edge) * 0.9);
+  animation: st-in 1.6s 1.4s var(--ease-out) backwards;
+}
+
+.st-phones {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+.st-ico {
+  width: 1.7em;
+  height: 1.7em;
+  color: var(--fn-accent);
+  filter: drop-shadow(0 0 5px rgba(127, 231, 255, 0.55));
+  flex: none;
+}
+
+.st-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+  max-width: 980px;
+}
+
+.st-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.st-ctl-t {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+@media (max-height: 780px) {
+  .st-poem {
+    display: none;
+  }
+  .st-quality {
+    margin-top: 18px;
+  }
+}
+
+@media (max-width: 760px) {
+  .seg--cards {
+    flex-wrap: wrap;
+  }
+  .seg--cards .seg-opt {
+    flex: 1 1 40%;
+  }
+  .st-title {
+    letter-spacing: 0.16em;
+  }
+  .st-title > span {
+    padding-left: 0.16em;
+  }
+}
+
+/* Full-screen preference switch under the Launch button. */
+.st-fs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7em;
+  margin-top: 0.4em;
+  cursor: pointer;
+  pointer-events: auto;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-faint);
+  opacity: 0;
+  transition: opacity 0.8s var(--ease-soft), color 0.3s;
+}
+.fn-start.is-ready .st-fs {
+  opacity: 1;
+}
+.st-fs:hover {
+  color: var(--fn-text);
+}

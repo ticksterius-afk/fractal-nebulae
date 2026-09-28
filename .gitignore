@@ -1,0 +1,4 @@
+node_modules
+dist
+# Machine-specific editor / Claude launch configs
+.claude/

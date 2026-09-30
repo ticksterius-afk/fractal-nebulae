@@ -1,0 +1,49 @@
+# Builds the app and publishes it to GitHub Pages on every push to main, so it can be
+# launched straight from https://ticksterius-afk.github.io/fractal-nebulae/ — nothing to install.
+# (Also runnable by hand: Actions tab → "Deploy to GitHub Pages" → Run workflow.)
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push supersedes a queued one, never a running one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      # A shader that fails to compile shows visitors a black screen: validate every program first.
+      - name: Validate shaders
+        run: npm run check:shaders
+      - name: Type-check and build
+        run: npm run build
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -10,7 +10,20 @@ Mandelbrot set and a Julia set. Every nebula has its own generative score and a 
 explains what the shape is, where it turns up in nature, and a few surprising facts. You can fly
 into any of them and keep diving: there is always finer detail.
 
-## Run it
+## ▶ Play it in your browser
+
+**<https://ticksterius-afk.github.io/fractal-nebulae/>**
+
+Nothing to install: open the link in **Chrome or Edge** on a computer with a mouse and
+keyboard, wait for the shaders to compile, press **Launch**, and put on headphones. The page
+loads about 0.6 MB. A dedicated graphics card makes a big difference; on a laptop, pick **Low**
+or **Medium** quality on the start screen. Phones and tablets aren't supported (the controls
+need a mouse and keyboard).
+
+The site is rebuilt and republished automatically on every push to `main`
+(`.github/workflows/deploy.yml`: validate shaders → type-check → build → GitHub Pages).
+
+## Run it locally
 
 You need:
 
@@ -41,6 +54,7 @@ use"; close that program or change `server.port` in `vite.config.ts`.
 | `npm run build` | Type-check, then a production bundle in `dist/` |
 | `npm run preview` | Serve `dist/` on <http://localhost:5191> |
 | `npm run typecheck` | TypeScript only |
+| `npm run check:shaders` | Validate every GLSL program offline (also runs before each deploy) |
 
 `dist/` uses relative paths, so any static web server can host it, from any folder.
 Opening `dist/index.html` straight from disk doesn't work, because browsers block ES modules on

@@ -9,13 +9,25 @@
  * Prints errors with line numbers mapped to the assembled source; returns true if valid.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { platform, tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const EXE = resolve(here, '../node_modules/glslang-validator-prebuilt-predownloaded/bin/glslangValidator.exe');
+// The package ships x64 binaries for Windows, Linux (CI) and macOS.
+const SUFFIX: Record<string, string> = { win32: '.exe', linux: '.linux', darwin: '.darwin' };
+const EXE = resolve(
+  here,
+  `../node_modules/glslang-validator-prebuilt-predownloaded/bin/glslangValidator${SUFFIX[platform()] ?? '.exe'}`,
+);
+if (platform() !== 'win32') {
+  try {
+    chmodSync(EXE, 0o755); // npm does not always keep the executable bit
+  } catch {
+    // Missing binary: execFileSync below reports it.
+  }
+}
 
 const COMMON_PREFIX = `#version 300 es
 precision highp float;

@@ -1,8 +1,10 @@
 /**
  * Render core: camera-relative HDR scene (sky → far stars → nebula raymarch passes far→near →
- * near stars) into a dynamically-scaled half-float target (+ log-depth texture), then bloom,
- * the TAAU resolve to output resolution (see post/TaaPass.ts) and the final composite.
- * With TAA the near stars go to a separate sprite layer that bypasses the history (see spriteRT).
+ * near stars → game overlay) into a dynamically-scaled half-float target (+ log-depth texture),
+ * then bloom, the TAAU resolve to output resolution (see post/TaaPass.ts) and the final composite.
+ * With TAA the near stars and the overlay go to a separate sprite layer that bypasses the history
+ * (see spriteRT); without TAA only an active overlay does (the composite must not lens it). With TAA
+ * and lenses on screen the near stars get a layer of their own, lensed like the scene (see nearRT).
  */
 import * as THREE from 'three';
 import type { NebulaRuntime, QualityName, QualityPreset, SimState } from '../core/types';
@@ -21,8 +23,11 @@ import {
 } from './NebulaMaterial';
 import { BloomPass } from './post/BloomPass';
 import { CompositePass, type CompositeParams } from './post/CompositePass';
-import { FULLSCREEN_CAMERA, makeSceneTarget, makeSpriteTarget } from './post/FullscreenPass';
+import { FULLSCREEN_CAMERA, makeHdrTarget, makeSceneTarget, makeSpriteTarget } from './post/FullscreenPass';
+import { LayerSumPass } from './post/LayerSumPass';
 import { TaaPass, taaJitter, type TaaFrame } from './post/TaaPass';
+import type { OverlayFrame } from './game/overlayTypes';
+import { GameOverlayRenderer } from './game/GameOverlayRenderer';
 
 interface NebulaPass {
   neb: NebulaRuntime;
@@ -204,9 +209,20 @@ export class Renderer {
    * Always the same size as sceneRT.
    */
   private readonly spriteRT: THREE.WebGLRenderTarget;
+  /**
+   * With TAA and lenses on screen (game modes): renderNear draws here instead of into spriteRT
+   * (same depth sharing and size), which then holds only the overlay. The composite lenses and
+   * shadows this layer like the scene — never the overlay. GPU memory is only allocated on first use.
+   */
+  private readonly nearRT: THREE.WebGLRenderTarget;
+  /** nearRT + spriteRT: the bloom input next to the scene on those frames (same size, no depth). */
+  private readonly layerSumRT: THREE.WebGLRenderTarget;
+  private readonly layerSum = new LayerSumPass();
   private readonly bloom = new BloomPass(6);
   private readonly taa = new TaaPass();
   private readonly composite = new CompositePass();
+  /** Game-mode overlay (beams, glyphs, star sprites, lenses, accent lights); idle in the Voyage. */
+  private readonly gameOverlay = new GameOverlayRenderer();
   private taaOn: boolean;
   /** The resolve cannot run on this device (link failure, incomplete MRT target, exception): TAA stays off. */
   private taaBroken = false;
@@ -295,6 +311,8 @@ export class Renderer {
       : null;
     this.sceneRT = makeSceneTarget(1, 1);
     this.spriteRT = makeSpriteTarget(this.sceneRT);
+    this.nearRT = makeSpriteTarget(this.sceneRT);
+    this.layerSumRT = makeHdrTarget(1, 1);
 
     this.ctx = {
       state: null as unknown as SimState, // assigned every frame before use
@@ -311,6 +329,8 @@ export class Renderer {
       beta: 0,
       velDir: new THREE.Vector3(0, 0, -1),
       skyExposure: 1,
+      overlay: null,
+      accents: { nebulaId: null, count: 0, posRadius: new Float32Array(16), colour: new Float32Array(16) },
     };
     this.taaFrameInfo = {
       scene: this.sceneRT,
@@ -396,7 +416,7 @@ export class Renderer {
       if (g) g.objects.push(pass.mesh);
       else groups.set(pass.key, { label: pass.label, objects: [pass.mesh] });
     }
-    const total = groups.size + 3;
+    const total = groups.size + 4;
     let done = 0;
     const progress = () => 0.03 + 0.95 * (done / total);
 
@@ -423,9 +443,16 @@ export class Renderer {
     await this.compileStars();
     done++;
 
+    // Overlay programs are compiled even in the Voyage, so entering a game mode causes no hitch.
+    if (this.disposed) return;
+    report(progress(), 'Game overlay');
+    await this.compileOverlay();
+    done++;
+
     if (this.disposed) return;
     report(progress(), 'Optics');
     await this.compileObjects(this.bloom.compileObjects(), this.sceneRT);
+    await this.compileObjects(this.layerSum.compileObjects(), this.sceneRT);
     await this.compileObjects(this.taa.compileObjects(), this.taa.compileTarget());
     if (this.taa.programFailed(this.three)) {
       this.taaBroken = true;
@@ -537,6 +564,10 @@ export class Renderer {
     this.bloom.dispose();
     this.taa.dispose();
     this.composite.dispose();
+    this.gameOverlay.dispose();
+    this.layerSum.dispose();
+    this.layerSumRT.dispose();
+    this.nearRT.dispose();
     this.spriteRT.dispose();
     this.sceneRT.dispose();
     disposeNebulaShared();
@@ -547,6 +578,16 @@ export class Renderer {
   // -------------------------------------------------------------------------------------------
   // Frame
   // -------------------------------------------------------------------------------------------
+
+  /**
+   * Game overlay (beams, glyphs, star sprites, lenses, accent lights) of the active mode, or null
+   * (Voyage). The renderer reads the frame every render; the mode mutates it in place. Sizes the
+   * overlay's instance buffers to the frame's capacities (allocates: call on mode changes only).
+   */
+  setOverlay(overlay: OverlayFrame | null): void {
+    this.ctx.overlay = overlay;
+    this.gameOverlay.setFrame(overlay);
+  }
 
   /**
    * Point `camera` at the ship's current orientation / FOV (render() does this too). Call it
@@ -593,6 +634,7 @@ export class Renderer {
     this.updateCamera(state);
     const useTaa = this.taaOn && !sceneHidden;
     const ctx = this.buildContext(state, useTaa);
+    this.prepareOverlay(nebulae, ctx, !sceneHidden); // before the nebula passes: they read ctx.accents
     const r = this.three;
     const rt = this.sceneRT;
     r.autoClear = false;
@@ -602,6 +644,13 @@ export class Renderer {
     r.setClearColor(0x000000, 1);
     r.clear(true, true, false);
 
+    // Without TAA an active overlay still gets the sprite layer: inside sceneRT the composite would
+    // lens it and black it out behind each mass's shadow (beams are already bent in world space).
+    const overlaySprites = !useTaa && !sceneHidden && this.gameOverlay.active;
+    // With TAA and lenses on screen the near stars leave the (unlensed) sprite layer for nearRT, so
+    // the composite lenses and shadows them like the scene (without TAA they are in sceneRT already).
+    // Never in the Voyage (no lenses): its frames stay exactly as they were.
+    const nearSplit = useTaa && this.composite.lensCount > 0;
     if (!sceneHidden) {
       try {
         this.sky?.render(r, ctx);
@@ -615,18 +664,37 @@ export class Renderer {
         this.warnOnce('stars-far', 'far stars render failed', err);
       }
       this.renderNebulae(state, nebulae, ctx);
-      if (useTaa) this.bindSprites();
+      if (nearSplit) this.bindLayer(this.nearRT);
+      else if (useTaa) this.bindLayer(this.spriteRT);
       else this.bindScene();
       try {
         this.stars?.renderNear(r, ctx);
       } catch (err) {
         this.warnOnce('stars-near', 'near stars render failed', err);
       }
+      // Same bound target as the near stars (unless split off): depth-tested against the scene,
+      // bypasses TAA history.
+      if (overlaySprites || nearSplit) this.bindLayer(this.spriteRT);
+      try {
+        this.gameOverlay.render(r, ctx.camera);
+      } catch (err) {
+        this.warnOnce('overlay-render', 'game overlay render failed', err);
+      }
     }
-    // useTaa implies the scene (and so the sprite layer) was drawn this frame.
-    const spriteTex = useTaa ? this.spriteRT.texture : null;
+    // useTaa / overlaySprites imply the scene (and so the sprite layer) was drawn this frame.
+    const spriteTex = useTaa || overlaySprites ? this.spriteRT.texture : null;
+    const nearTex = nearSplit ? this.nearRT.texture : null;
 
-    const bloomTex = this.quality.bloom ? this.bloom.render(r, rt.texture, spriteTex) : null;
+    let bloomTex: THREE.Texture | null = null;
+    if (this.quality.bloom) {
+      // Bloom takes one layer next to the scene: with the near stars split off, their sum.
+      let bloomAdd = spriteTex;
+      if (nearTex && spriteTex) {
+        this.layerSum.render(r, nearTex, spriteTex, this.layerSumRT);
+        bloomAdd = this.layerSumRT.texture;
+      }
+      bloomTex = this.bloom.render(r, rt.texture, bloomAdd);
+    }
     this.updatePostParams(state, nebulae, dt, now);
 
     // TAAU resolve to output resolution; the composite then only needs a mild sharpen.
@@ -641,7 +709,7 @@ export class Renderer {
     } else {
       this.taa.invalidate(); // hidden scene / TAA off / failure: nothing valid to reproject next frame
     }
-    this.composite.render(r, sceneTex, sceneSize, bloomTex, this.outW / this.outH, this.post, spriteTex);
+    this.composite.render(r, sceneTex, sceneSize, bloomTex, this.outW / this.outH, this.post, spriteTex, nearTex);
   }
 
   /** Run the TAAU resolve for this frame; null (and a warning once) if it failed. */
@@ -683,14 +751,32 @@ export class Renderer {
     }
   }
 
+  /**
+   * Convert the game overlay for this frame (instance buffers, ctx.accents) and hand its projected
+   * lenses to the composite — every frame, with count 0 when there is no overlay or no scene.
+   */
+  private prepareOverlay(nebulae: NebulaRuntime[], ctx: RenderContext, show: boolean): void {
+    const ov = this.gameOverlay;
+    try {
+      ov.prepare(ctx, nebulae, show);
+    } catch (err) {
+      ov.reset(ctx);
+      this.warnOnce('overlay-prepare', 'game overlay update failed', err);
+    }
+    try {
+      this.composite.setLenses(ov.lenses, ov.lensCount, this.sceneRT.depthTexture);
+    } catch (err) {
+      this.warnOnce('overlay-lenses', 'lens hand-off to the composite failed', err);
+    }
+  }
+
   private bindScene(): void {
     this.sceneRT.scissorTest = false;
     this.three.setRenderTarget(this.sceneRT);
   }
 
-  /** Bind the sprite layer and clear its colour only (the depth it shares holds the scene's). */
-  private bindSprites(): void {
-    const rt = this.spriteRT;
+  /** Bind a sprite layer (spriteRT / nearRT) and clear its colour only (the depth it shares holds the scene's). */
+  private bindLayer(rt: THREE.WebGLRenderTarget): void {
     rt.scissorTest = false;
     this.three.setRenderTarget(rt);
     this.three.setClearColor(0x000000, 1);
@@ -955,6 +1041,8 @@ export class Renderer {
     if (this.sceneRT.width !== w || this.sceneRT.height !== h) this.sceneRT.setSize(w, h);
     // Shares sceneRT's depth texture: three throws if the sizes ever differ.
     if (this.spriteRT.width !== w || this.spriteRT.height !== h) this.spriteRT.setSize(w, h);
+    if (this.nearRT.width !== w || this.nearRT.height !== h) this.nearRT.setSize(w, h);
+    if (this.layerSumRT.width !== w || this.layerSumRT.height !== h) this.layerSumRT.setSize(w, h);
     this.bloom.setSize(w, h);
     this.outSize.set(this.outW, this.outH);
     this.taa.setSize(this.outW, this.outH); // resets the history only when the OUTPUT size changes
@@ -1060,6 +1148,16 @@ export class Renderer {
     }
   }
 
+  /** Precompile the game-overlay programs (both occlusion passes share them) against the scene target. */
+  private async compileOverlay(): Promise<void> {
+    if (this.contextLost) return;
+    try {
+      await this.gameOverlay.compile(this.three, this.camera, this.sceneRT);
+    } catch (err) {
+      this.warnOnce('compile-overlay', 'game overlay shader precompilation failed', err);
+    }
+  }
+
   private warnOnce(key: string, message: string, err?: unknown): void {
     if (this.warned.has(key)) return;
     this.warned.add(key);
@@ -1098,7 +1196,9 @@ export class Renderer {
     const stages: (() => Promise<void>)[] = [
       () => this.compileObjects(meshes, this.sceneRT),
       () => this.compileStars(),
+      () => this.compileOverlay(),
       () => this.compileObjects(this.bloom.compileObjects(), this.sceneRT),
+      () => this.compileObjects(this.layerSum.compileObjects(), this.sceneRT),
       () => this.compileObjects(this.taa.compileObjects(), this.taa.compileTarget()),
       () => this.compileObjects(this.composite.compileObjects(), null),
     ];

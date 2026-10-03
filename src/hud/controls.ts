@@ -1,6 +1,7 @@
 /**
  * The control scheme (ARCHITECTURE.md §4) and a renderer for key "chips", shared by the start
- * screen, the in-flight hints overlay and the pause screen.
+ * screen, the in-flight hints overlay and the pause screen. Game modes bring their own rows
+ * (GameMode.controls); the pause screen lists them first, then SHARED_CONTROLS.
  */
 import { el, markup } from './dom';
 
@@ -15,6 +16,21 @@ export interface ControlDef {
   hint: boolean;
 }
 
+/** One item of the start-screen footer summary. */
+export interface ControlSummary {
+  keys: KeyGlyph[];
+  text: string;
+}
+
+/** Rows every mode shares: the pause screen appends them after a game mode's own rows. */
+export const SHARED_CONTROLS: ControlDef[] = [
+  { keys: ['H'], action: 'Hide HUD (cinematic)', short: 'Hide HUD', hint: true },
+  { keys: ['M'], action: 'Mute music', short: 'Mute', hint: true },
+  { keys: ['Esc'], action: 'Pause & settings (hold to leave full screen)', short: 'Pause', hint: true },
+  { keys: ['F11'], action: 'Full screen on / off (also Alt+Enter)', short: 'Full screen', hint: false },
+];
+
+/** The Voyage (no game mode): flight rows, then the shared rows. */
 export const CONTROLS: ControlDef[] = [
   { keys: ['MOUSE'], action: 'Look around', short: 'Look', hint: true },
   { keys: ['W', 'S'], action: 'Thrust forward / reverse', short: 'Thrust', hint: true },
@@ -29,10 +45,18 @@ export const CONTROLS: ControlDef[] = [
   { keys: ['Space'], action: 'Hold · gravity-glide to target (or the nebula under the reticle)', short: 'Hold · glide', hint: true },
   { keys: ['T'], action: 'Voyage · zen auto-tour (T again to stop)', short: 'Voyage', hint: true },
   { keys: ['Tab', 'I'], action: 'Codex panel (pin / close)', short: 'Codex', hint: true },
-  { keys: ['H'], action: 'Hide HUD (cinematic)', short: 'Hide HUD', hint: true },
-  { keys: ['M'], action: 'Mute music', short: 'Mute', hint: true },
-  { keys: ['Esc'], action: 'Pause & settings (hold to leave full screen)', short: 'Pause', hint: true },
-  { keys: ['F11'], action: 'Full screen on / off (also Alt+Enter)', short: 'Full screen', hint: false },
+  ...SHARED_CONTROLS,
+];
+
+/** Start-screen footer summary of the Voyage. */
+export const VOYAGE_SUMMARY: ControlSummary[] = [
+  { keys: ['MOUSE'], text: 'look' },
+  { keys: ['W', 'A', 'S', 'D'], text: 'fly' },
+  { keys: ['RMB'], text: 'hyper' },
+  { keys: ['LMB'], text: 'target' },
+  { keys: ['Space'], text: 'pulse · hold to glide' },
+  { keys: ['T'], text: 'voyage' },
+  { keys: ['Esc'], text: 'pause' },
 ];
 
 const MOUSE_SVG = (fill: 'l' | 'r' | 'w' | 'none') => `
@@ -71,10 +95,15 @@ export function keyChips(parent: HTMLElement, keys: KeyGlyph[]): HTMLElement {
   return wrap;
 }
 
-/** A two-column list of controls (keys | action). */
-export function controlsList(parent: HTMLElement, compact: boolean, className = ''): HTMLElement {
+/** A two-column list of controls (keys | action); the Voyage table unless `rows` is given. */
+export function controlsList(
+  parent: HTMLElement,
+  compact: boolean,
+  className = '',
+  rows: readonly ControlDef[] = CONTROLS,
+): HTMLElement {
   const list = el('div', `ctl-list${compact ? ' ctl-list--compact' : ''}${className ? ' ' + className : ''}`, parent);
-  for (const c of CONTROLS) {
+  for (const c of rows) {
     if (compact && !c.hint) continue;
     const row = el('div', 'ctl-row', list);
     keyChips(row, c.keys);

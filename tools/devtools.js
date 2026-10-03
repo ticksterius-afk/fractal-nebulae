@@ -1,5 +1,111 @@
 // Dev-only helpers for visual tuning in the browser console. Load with:
 //   await import('/tools/devtools.js').then(m => m.setup())
+
+// The built-in browser pane refuses pointer lock: stand in for it so locked flight (First Light
+// placement, Tab, grabs) can be tested there. Call it before Launch / Resume:
+//   await import('/tools/devtools.js').then(m => m.fakeLock())
+// `__fakeLock.refuse = true` makes later requests fail; `__look(dx, dy)` sends locked mouse movement.
+export function fakeLock({ refuse = false } = {}) {
+  if (window.__fakeLock) {
+    window.__fakeLock.refuse = refuse;
+    return 'fake pointer lock already installed';
+  }
+  const st = { el: null, refuse };
+  Object.defineProperty(Document.prototype, 'pointerLockElement', { configurable: true, get: () => st.el });
+  Element.prototype.requestPointerLock = function () {
+    return new Promise((res, rej) => setTimeout(() => {
+      if (st.refuse) {
+        document.dispatchEvent(new Event('pointerlockerror'));
+        rej(new DOMException('refused by the stand-in', 'NotAllowedError'));
+        return;
+      }
+      st.el = this;
+      document.dispatchEvent(new Event('pointerlockchange'));
+      res();
+    }, 30));
+  };
+  Document.prototype.exitPointerLock = function () {
+    if (!st.el) return;
+    st.el = null;
+    setTimeout(() => document.dispatchEvent(new Event('pointerlockchange')), 10);
+  };
+  window.__fakeLock = st;
+  window.__look = (dx, dy) =>
+    document.dispatchEvent(new MouseEvent('mousemove', { movementX: dx, movementY: dy, bubbles: true }));
+  return 'fake pointer lock installed';
+}
+
+// First Light playtest rig for the built-in pane (rAF throttled, pointer lock refused, often hidden):
+//   await import('/tools/devtools.js').then(m => m.flRig())   then Launch (or __launch())
+//   __run(sec)            drive frames at 60 Hz by hand
+//   __aim(localPos)       turn the ship so the reticle looks at a level-local point
+//   __click(button)       press + release a mouse button on the canvas (locked flight)
+//   __key(code, opts)     key down + up (e.g. 'Tab', 'Digit2', 'KeyZ')
+//   __playLevel(id)       load a level, then aim + click each authored solution mass → result
+//   __shot(name)          POST a canvas JPEG to a local receiver on 127.0.0.1:5199 (when screenshots fail;
+//                         start it first: npm run shots, i.e. tools/shot-receiver.mjs)
+export async function flRig() {
+  fakeLock();
+  const THREE = await import('/node_modules/.vite/deps/three.js');
+  const { findLevel } = await import('/src/game/firstlight/chapters.ts');
+  const a = window.__app;
+  window.__run = (sec) => new Promise((res) => {
+    let t = performance.now();
+    const t0 = t;
+    const iv = setInterval(() => { t += 1000 / 60; a.frame(t); if (t - t0 > sec * 1000) { clearInterval(iv); res(); } }, 4);
+  });
+  window.__launch = () => [...document.querySelectorAll('button')].find((b) => /launch/i.test(b.textContent))?.click();
+  window.__aim = (local) => {
+    const st = a.sim.state;
+    const id = window.__fl?.state().level;
+    const def = id ? findLevel(id)?.level : null;
+    const neb = a.sim.nebulae.find((n) => n.def.id === (def?.nebula ?? window.__fl?.state().nebula));
+    if (!neb) return false;
+    const w = new THREE.Vector3(...local).multiplyScalar(neb.scale).applyQuaternion(neb.rotation).add(neb.position);
+    st.ship.orientation.setFromRotationMatrix(new THREE.Matrix4().lookAt(st.ship.position.clone(), w, st.ship.up.clone()));
+    const s = a.sim;
+    s.baseQ?.copy(st.ship.orientation); s.lastGoodQ?.copy(st.ship.orientation); s.bank = 0;
+    s.yawPending = 0; s.pitchPending = 0; s.yawStage = 0; s.pitchStage = 0;
+    return true;
+  };
+  window.__click = (button = 0) => {
+    document.getElementById('gl').dispatchEvent(new MouseEvent('mousedown', { button, bubbles: true }));
+    setTimeout(() => window.dispatchEvent(new MouseEvent('mouseup', { button, bubbles: true })), 40);
+  };
+  window.__key = (code, opts = {}) => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { code, key: code, bubbles: true, ...opts }));
+    setTimeout(() => window.dispatchEvent(new KeyboardEvent('keyup', { code, key: code, bubbles: true, ...opts })), 30);
+  };
+  window.__playLevel = async (id) => {
+    window.__fl.load(id);
+    await window.__run(4.5);
+    if (window.__fl.state().view === 'lab') { window.__key('Tab'); await window.__run(1.2); }
+    const L = findLevel(id).level;
+    for (const m of L.solution) {
+      window.__key({ light: 'Digit1', medium: 'Digit2', heavy: 'Digit3' }[m.size]);
+      await window.__run(0.15);
+      window.__aim(m.pos);
+      await window.__run(0.25);
+      window.__click(0);
+      await window.__run(0.5);
+    }
+    await window.__run(0.3);
+    const s = window.__fl.state();
+    return { id, solved: s.solved, phase: s.phase, masses: s.masses.length };
+  };
+  window.__shot = async (name, frames = 6) => {
+    let t = performance.now();
+    const c = document.getElementById('gl');
+    const out = document.createElement('canvas');
+    out.width = c.width; out.height = c.height;
+    for (let i = 0; i < frames; i++) { t += 1000 / 60; a.frame(t); }
+    out.getContext('2d').drawImage(c, 0, 0);
+    const data = out.toDataURL('image/jpeg', 0.85);
+    const r = await fetch('http://127.0.0.1:5199/', { method: 'POST', body: JSON.stringify({ name, data }) });
+    return r.text();
+  };
+  return 'First Light rig ready';
+}
 export async function setup({ hideHud = true } = {}) {
   const THREE = await import('/node_modules/.vite/deps/three.js');
   const a = window.__app;

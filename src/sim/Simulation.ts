@@ -7,9 +7,13 @@
  * Feel first: every control input goes through smoothing with time constants chosen to be
  * weighty and silky, never twitchy; every translation goes through a sphere-traced,
  * collision-safe integrator so the ship can never tunnel through fractal surfaces.
+ *
+ * Game modes (design/60-first-light-build.md §S) add three knobs, all inert by default (the Voyage):
+ * a control policy (which Voyage controls are live), soft arena bounds, and a puppet mode in which
+ * the mode drives the ship pose directly (lab-view orbit camera, cinematic glides).
  */
 import * as THREE from 'three';
-import type { AppEvents, AppSettings, NebulaDef, NebulaRuntime, SimState } from '../core/types';
+import type { AppEvents, AppSettings, NebulaDef, NebulaRuntime, SimState, Vec3 } from '../core/types';
 import type { InputFrame } from '../ship/Input';
 import { TUNING } from '../app/config';
 import { bus } from '../core/events';
@@ -222,6 +226,51 @@ const PROBE_MAX_STEPS = 40;
 const PROBE_MIN_STRIDES = 32;
 const PROBE_MARGIN = 0.02;
 
+/**
+ * Arena soft bounds (game modes): outward velocity fades between ARENA_FADE_INNER and
+ * ARENA_FADE_OUTER × the arena radius (none beyond), and an idle ship beyond the radius drifts
+ * back toward the centre at up to ARENA_DRIFT_RATE × radius per second (fully at the outer edge).
+ */
+const ARENA_FADE_INNER = 1.0;
+const ARENA_FADE_OUTER = 1.5;
+const ARENA_DRIFT_RATE = 0.06;
+
+/** Which Voyage controls are live (game modes switch some off). */
+export interface ControlPolicy {
+  /** Right mouse: hyper + ghost. */
+  hyper: boolean;
+  /** Left mouse: target the nebula under the reticle. */
+  targeting: boolean;
+  /** Space tap: resonance pulse. */
+  pulse: boolean;
+  /** Space hold: gravity-glide autopilot. */
+  glide: boolean;
+  /** T: voyage autopilot. */
+  voyage: boolean;
+  /** Mouse wheel sets the cruise throttle; when false the throttle is fixed at `throttle`. */
+  wheelThrottle: boolean;
+  /** Fixed throttle while wheelThrottle is off (clamped to the wheel's range). */
+  throttle: number;
+}
+
+/** The Voyage: everything on. */
+export const DEFAULT_CONTROL_POLICY: Readonly<ControlPolicy> = Object.freeze({
+  hyper: true,
+  targeting: true,
+  pulse: true,
+  glide: true,
+  voyage: true,
+  wheelThrottle: true,
+  throttle: 1,
+});
+
+/** Soft play sphere in a nebula's LOCAL frame (see Simulation.setArena). */
+export interface ArenaBounds {
+  nebulaId: string;
+  centerLocal: Vec3;
+  radiusLocal: number;
+}
+
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
 /** 26 lattice directions (axes, face and body diagonals). */
@@ -239,6 +288,13 @@ const NO_INPUT: InputFrame = {
   wheel: 0,
   toggles: { hud: false, codex: false, mute: false, voyage: false },
   anyMoveInput: false,
+  // Game-mode fields: never read here (hand-built frames in the test harnesses omit them).
+  buttons: 0, pressed: 0, released: 0,
+  pointer: { x: 0, y: 0, inside: false, dx: 0, dy: 0 },
+  keyDown: () => false,
+  keyPressed: () => false,
+  mods: { shift: false, ctrl: false, alt: false, meta: false },
+  escape: false,
 };
 
 /** Scratch frame for physics substeps after the first: held controls only, no edges / deltas. */
@@ -279,6 +335,8 @@ const _thrustDir = new THREE.Vector3();
 const _slideDir = new THREE.Vector3();
 /** updateTarget() only (it also runs inside setTarget, mid-step). */
 const _tgt = new THREE.Vector3();
+/** Arena world centre (refreshed every substep by updateArena). */
+const _arenaC = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 
@@ -368,6 +426,17 @@ export class Simulation {
   private readonly lastGoodPos = new THREE.Vector3();
   private readonly lastGoodQ = new THREE.Quaternion();
 
+  // Game-mode knobs (see setControlPolicy / setArena / setPuppet).
+  private readonly policy: ControlPolicy = { ...DEFAULT_CONTROL_POLICY };
+  /** Throttle the wheel had set before a policy fixed it (restored when the wheel is live again). */
+  private wheelThrottle = 1;
+  private arena: ArenaBounds | null = null;
+  /** Arena world radius this substep (0: no arena). Centre in _arenaC. */
+  private arenaRadius = 0;
+  private puppet = false;
+  /** The next setPuppetPose is a cut (no velocity from the jump). */
+  private puppetCut = false;
+
   constructor(opts: SimulationOptions) {
     this.settings = { ...opts.settings };
     this.universe = new Universe(opts.nebulae, opts.resolveFractal);
@@ -423,7 +492,7 @@ export class Simulation {
         blackHoleId: null,
       },
       target: { id: null, distance: 0, eta: Infinity, lightYears: 0 },
-      pulse: { active: false, origin: new THREE.Vector3(), radius: 0, width: 0, age: 0, revealTime: 0 },
+      pulse: { active: false, origin: new THREE.Vector3(), radius: 0, width: 0, age: 0, revealTime: 0, gain: 1 },
       wormhole: { active: false, progress: 0, fromId: null, toId: null },
     };
     this.pilotCtx = {
@@ -450,6 +519,10 @@ export class Simulation {
     const s = this.state;
     const ship = s.ship;
     s.dt = dt;
+    if (this.puppet) {
+      this.updatePuppet(dt);
+      return;
+    }
 
     // Physics in substeps of ≤ PHYSICS_STEP (identical flight at 2 fps and at 144 fps). One-shot
     // inputs (clicks, taps, toggles, wheel, mouse travel) are delivered with the first substep.
@@ -475,13 +548,17 @@ export class Simulation {
     const controllable = !this.paused && !this.attract && !s.wormhole.active;
     const inp = controllable ? input : NO_INPUT;
 
-    if (inp.wheel !== 0 && Number.isFinite(inp.wheel)) {
+    const pol = this.policy;
+    if (!pol.wheelThrottle) {
+      ship.throttle = pol.throttle;
+    } else if (inp.wheel !== 0 && Number.isFinite(inp.wheel)) {
       ship.throttle = clamp(ship.throttle * Math.pow(THROTTLE_STEP, inp.wheel), THROTTLE_MIN, THROTTLE_MAX);
     }
     ship.precision = inp.precision;
 
     this.universe.update(s.time, ship.position);
     this.measureSurface();
+    if (this.arena) this.updateArena();
     this.immunity = Math.max(0, this.immunity - dt);
     if (dt > 0) this.applyCoRotation(dt);
 
@@ -494,13 +571,13 @@ export class Simulation {
       this.ghostOutTime = Infinity;
       this.updateWormhole(dt);
     } else {
-      const hyperPressed = this.updateHyper(dt, inp.hyper);
+      const hyperPressed = this.updateHyper(dt, inp.hyper && pol.hyper);
       this.updateGhost(dt);
       if (this.pilot.active && (inp.anyMoveInput || hyperPressed)) this.cancelAutopilot();
-      if (inp.toggles.voyage) this.toggleVoyage();
-      if (inp.click) this.handleClick();
-      if (inp.spaceTap) this.firePulse();
-      if (inp.spaceHold) this.engageTargetAutopilot();
+      if (inp.toggles.voyage && pol.voyage) this.toggleVoyage();
+      if (inp.click && pol.targeting) this.handleClick();
+      if (inp.spaceTap && pol.pulse) this.firePulse();
+      if (inp.spaceHold && pol.glide) this.engageTargetAutopilot();
       if (dt > 0) {
         this.steer(dt, inp);
         this.integrate(dt);
@@ -579,6 +656,198 @@ export class Simulation {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Game-mode knobs (design/60-first-light-build.md §S). All inert in the Voyage.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Switch Voyage controls off for a game mode: hyper/ghost (RMB ignored), targeting (LMB click
+   * ignored; the current target is dropped), pulse (Space tap), glide (Space hold), voyage (T),
+   * wheel → throttle (then the throttle is fixed at `throttle`). Unspecified fields take their
+   * DEFAULT_CONTROL_POLICY value (each call states the whole policy); null restores the Voyage, and
+   * with it the throttle the wheel had set. A running autopilot of a disabled kind is cancelled. A
+   * ghost pass already under way still finishes (ghost ends only once the ship is clear of structure).
+   */
+  setControlPolicy(p: Partial<ControlPolicy> | null): void {
+    const d = DEFAULT_CONTROL_POLICY;
+    const pol = this.policy;
+    const ship = this.state.ship;
+    const wasWheel = pol.wheelThrottle;
+    const flag = (v: boolean | undefined, def: boolean): boolean => (typeof v === 'boolean' ? v : def);
+    pol.hyper = flag(p?.hyper, d.hyper);
+    pol.targeting = flag(p?.targeting, d.targeting);
+    pol.pulse = flag(p?.pulse, d.pulse);
+    pol.glide = flag(p?.glide, d.glide);
+    pol.voyage = flag(p?.voyage, d.voyage);
+    pol.wheelThrottle = flag(p?.wheelThrottle, d.wheelThrottle);
+    const t = p?.throttle;
+    pol.throttle = typeof t === 'number' && Number.isFinite(t) ? clamp(t, THROTTLE_MIN, THROTTLE_MAX) : d.throttle;
+    if (!pol.wheelThrottle) {
+      if (wasWheel) this.wheelThrottle = ship.throttle;
+      ship.throttle = pol.throttle;
+    } else if (!wasWheel) {
+      ship.throttle = Number.isFinite(this.wheelThrottle) ? clamp(this.wheelThrottle, THROTTLE_MIN, THROTTLE_MAX) : 1;
+    }
+    if (!pol.hyper && this.hyperHeld) {
+      this.hyperHeld = false;
+      this.emit('hyperEnd', {});
+    }
+    if ((!pol.voyage && this.pilot.mode === 'voyage') || (!pol.glide && this.pilot.mode === 'target')) {
+      this.cancelAutopilot();
+    }
+    if (!pol.targeting) this.setTarget(null);
+  }
+
+  /** The control policy in effect (read-only view; change it with setControlPolicy). */
+  get controlPolicy(): Readonly<ControlPolicy> {
+    return this.policy;
+  }
+
+  /**
+   * Soft play sphere for a game mode, in the LOCAL frame of `nebulaId`. Its world centre and radius
+   * are re-derived from the nebula runtime every substep, so a spinning nebula carries the arena.
+   * Outward velocity fades between 1.0 and 1.5 × the radius (none beyond); an idle ship outside the
+   * radius drifts gently back toward the centre. No walls, no messages; collision safety unchanged.
+   * null (or an unknown nebula / invalid sphere) removes the bounds.
+   */
+  setArena(a: ArenaBounds | null): void {
+    const c = a?.centerLocal;
+    if (
+      !a ||
+      !c ||
+      this.universe.indexOf(a.nebulaId) < 0 ||
+      !(a.radiusLocal > 0) ||
+      !Number.isFinite(a.radiusLocal) ||
+      !Number.isFinite(c[0] + c[1] + c[2])
+    ) {
+      this.arena = null;
+      this.arenaRadius = 0;
+      return;
+    }
+    this.arena = { nebulaId: a.nebulaId, centerLocal: [c[0], c[1], c[2]], radiusLocal: a.radiusLocal };
+    this.updateArena();
+  }
+
+  /** True while the ship is puppeted (setPuppet). */
+  get puppeted(): boolean {
+    return this.puppet;
+  }
+
+  /**
+   * Puppet mode: the game mode drives the ship pose itself through setPuppetPose (lab-view orbit
+   * camera, cinematic glides). While on, update() skips steering, integration, collisions, hyper,
+   * ghost, co-rotation, autopilot and gravity, but still animates the universe, the pulse, the camera
+   * (no hyper widening) and the environment. Turning it on cancels the autopilot, hyper and ghost and
+   * completes a wormhole transit in progress. Turning it off re-syncs the attitude and look state to
+   * the puppet pose, zeroes the velocity and re-measures the speed scales, so flight resumes smoothly
+   * from there. Release it at a free-space pose: the ship is not pushed out of structure until it moves.
+   */
+  setPuppet(on: boolean): void {
+    if (on === this.puppet) return;
+    const s = this.state;
+    const ship = s.ship;
+    if (on) {
+      this.cancelAutopilot();
+      this.pilot.cmd.boost = 0;
+      if (this.hyperHeld) {
+        this.hyperHeld = false;
+        this.emit('hyperEnd', {});
+      }
+      if (s.wormhole.active) this.endWormholeNow();
+      this.puppet = true;
+      this.puppetCut = true;
+    } else {
+      this.puppet = false;
+      this.puppetCut = false;
+      // The unbanked attitude becomes the puppet pose (puppet poses carry no bank).
+      if (finiteQuat(ship.orientation) && ship.orientation.lengthSq() > 1e-12) this.baseQ.copy(ship.orientation);
+      this.bank = 0;
+      this.rollRate = 0;
+      this.yawRate = 0;
+      this.angVel.set(0, 0, 0);
+      this.vCtrl.set(0, 0, 0);
+      this.vGrav.set(0, 0, 0);
+      this.desired.set(0, 0, 0);
+      this.writeOrientation();
+      this.universe.refresh(ship.position);
+      this.measureSurface();
+      this.dirScale = this.speedScale;
+      this.flightScale = this.speedScale;
+      this.lastGoodPos.copy(ship.position);
+      this.lastGoodQ.copy(this.baseQ);
+      ship.velocity.set(0, 0, 0);
+      ship.speed = 0;
+      ship.velocityDir.copy(ship.forward);
+    }
+    // Both ways: nothing carried over from before (look lag, hyper ramp, ghost pass, thrust).
+    this.clearLook();
+    this.hasThrustInput = false;
+    this.thrustTarget = 0;
+    this.hyperRamp = 0;
+    ship.hyper = 0;
+    this.ghostActive = false;
+    this.ghostInside = false;
+    this.ghostOutTime = Infinity;
+    this.ghostClip = 0;
+    if (!on) this.updateEnvironment();
+  }
+
+  /**
+   * Puppet pose (world position, camera orientation), applied immediately: forward / up / right,
+   * velocity = Δposition / state.dt (0 when dt = 0, and for the first pose after setPuppet(true): a
+   * cut), and the renderer's x-ray radius `ghostClip` (world ly, 0 = off) so structure between an
+   * orbit camera and its focus turns to glass. The universe, surface distance and environment are
+   * refreshed for the new pose. Ignored unless puppeted, and for non-finite input.
+   */
+  setPuppetPose(position: THREE.Vector3, orientation: THREE.Quaternion, ghostClip = 0): void {
+    if (!this.puppet || !finiteVec(position) || !finiteQuat(orientation) || orientation.lengthSq() < 1e-12) return;
+    const ship = this.state.ship;
+    const dt = this.state.dt;
+    if (!this.puppetCut && dt > 0) ship.velocity.subVectors(position, ship.position).multiplyScalar(1 / dt);
+    else ship.velocity.set(0, 0, 0);
+    if (!finiteVec(ship.velocity)) ship.velocity.set(0, 0, 0);
+    this.puppetCut = false;
+    ship.position.copy(position);
+    this.baseQ.copy(orientation);
+    this.bank = 0;
+    this.writeOrientation();
+    ship.speed = ship.velocity.length();
+    if (ship.speed > TINY) ship.velocityDir.copy(ship.velocity).multiplyScalar(1 / ship.speed);
+    else ship.velocityDir.copy(ship.forward);
+    ship.ghostClip = ghostClip > 0 && Number.isFinite(ghostClip) ? ghostClip : 0;
+    this.lastGoodPos.copy(ship.position);
+    this.lastGoodQ.copy(this.baseQ);
+    this.universe.refresh(ship.position);
+    this.measureSurface();
+    this.updateEnvironment();
+  }
+
+  /**
+   * Game modes: roll the resonance-pulse wavefront out of a world point to `maxRadius` ly (First
+   * Light's ignition ceremony, its Space pulse). Visual only: no bus event, so the HUD reveals no
+   * nebula markers. Ignored for non-finite input. `gain` (0..1) softens the wavefront's brightness.
+   */
+  firePulseAt(origin: THREE.Vector3, maxRadius: number, gain = 1): void {
+    if (!finiteVec(origin) || !(maxRadius > 0) || !Number.isFinite(maxRadius)) return;
+    const p = this.state.pulse;
+    p.active = true;
+    p.gain = Number.isFinite(gain) ? Math.min(Math.max(gain, 0), 1) : 1;
+    p.origin.copy(origin);
+    p.age = 0;
+    p.radius = 0;
+    this.pulseTime = 0;
+    this.pulseMaxRadius = maxRadius;
+    p.width = 0.01 * maxRadius;
+  }
+
+  /** Put the ship at rest at a pose (puppet on → pose → off). Ends puppet mode if it was on. */
+  teleport(position: THREE.Vector3, orientation: THREE.Quaternion): void {
+    this.setPuppet(false);
+    this.setPuppet(true);
+    this.setPuppetPose(position, orientation);
+    this.setPuppet(false);
+  }
+
   /**
    * Reset the ship to TUNING.startPosition looking −Z, throttle 1, everything calm. Every open
    * event pair (wormhole, autopilot, hyper, target, region) is closed on the bus first, so
@@ -588,6 +857,8 @@ export class Simulation {
     this.closeOpenPairs();
     const s = this.state;
     const ship = s.ship;
+    this.puppet = false;
+    this.puppetCut = false;
     const [x, y, z] = TUNING.startPosition;
     ship.position.set(x, y, z);
     this.baseQ.identity();
@@ -666,6 +937,7 @@ export class Simulation {
     this.pulseMaxRadius = FLIGHT.pulseRadiusFactor * Math.max(this.surf, FLIGHT.pulseMinRadius);
     p.width = 0.01 * this.pulseMaxRadius;
     p.revealTime = TUNING.pulseRevealSeconds;
+    p.gain = 1;
     this.emit('pulse', { origin: p.origin.clone() });
   }
 
@@ -891,6 +1163,7 @@ export class Simulation {
     if (!this.hasThrustInput && !this.paused) {
       this.addNebulaDrift();
       this.addHomeDrift();
+      if (this.arenaRadius > 0) this.addArenaDrift();
     }
   }
 
@@ -1077,6 +1350,38 @@ export class Simulation {
     return smoothstep(this.homeRadius * FLIGHT.boundaryInner, this.homeRadius * FLIGHT.boundaryOuter, r);
   }
 
+  /** Arena world centre (_arenaC) and radius from the nebula runtime as of this substep (spin included). */
+  private updateArena(): void {
+    const a = this.arena;
+    const rt = a ? this.universe.get(a.nebulaId) : undefined;
+    if (!a || !rt) {
+      this.arenaRadius = 0;
+      return;
+    }
+    const c = a.centerLocal;
+    _arenaC.set(c[0], c[1], c[2]).multiplyScalar(rt.scale).applyQuaternion(rt.rotation).add(rt.position);
+    const R = a.radiusLocal * rt.scale;
+    this.arenaRadius = Number.isFinite(R) && finiteVec(_arenaC) ? R : 0;
+  }
+
+  /** 0 inside the arena radius, → 1 at ARENA_FADE_OUTER × radius; 0 without an arena. */
+  private arenaFactor(): number {
+    const R = this.arenaRadius;
+    if (!(R > 0)) return 0;
+    const r = this.state.ship.position.distanceTo(_arenaC);
+    return smoothstep(ARENA_FADE_INNER * R, ARENA_FADE_OUTER * R, r);
+  }
+
+  /** Outside the arena radius an idle ship drifts gently back toward the arena centre. */
+  private addArenaDrift(): void {
+    const edge = this.arenaFactor();
+    if (edge <= 0) return;
+    _v1.subVectors(_arenaC, this.state.ship.position).normalize();
+    const speed = ARENA_DRIFT_RATE * this.arenaRadius * edge;
+    this.desired.addScaledVector(_v1, speed);
+    this.driftAccel += speed / FLIGHT.coastTau;
+  }
+
   private integrate(dt: number): void {
     const ship = this.state.ship;
     const pos = ship.position;
@@ -1092,6 +1397,14 @@ export class Simulation {
       _v1.subVectors(pos, this.homeCentre).normalize();
       const out = this.vCtrl.dot(_v1);
       const allowed = Math.max(this.desired.dot(_v1), 0) * (1 - edge);
+      if (out > allowed) this.vCtrl.addScaledVector(_v1, allowed - out);
+    }
+    // Arena soft bounds (game modes): the same rule around the play sphere.
+    const arenaEdge = this.arenaFactor();
+    if (arenaEdge > 0) {
+      _v1.subVectors(pos, _arenaC).normalize();
+      const out = this.vCtrl.dot(_v1);
+      const allowed = Math.max(this.desired.dot(_v1), 0) * (1 - arenaEdge);
       if (out > allowed) this.vCtrl.addScaledVector(_v1, allowed - out);
     }
 
@@ -1541,6 +1854,52 @@ export class Simulation {
       if (p.distanceTo(rt.position) < keepOut) return true;
     }
     return false;
+  }
+
+  /** Complete a wormhole transit at once (puppet takeover); the ship stays where it is. */
+  private endWormholeNow(): void {
+    const w = this.state.wormhole;
+    const toId = w.toId ?? w.fromId ?? '';
+    // Still at the entry horizon (before the jump): that hole must not swallow the ship again.
+    if (!this.wormholeTeleported) this.immuneHole = this.universe.indexOf(w.fromId);
+    w.active = false;
+    w.progress = 0;
+    w.fromId = null;
+    w.toId = null;
+    this.wormholeTeleported = false;
+    this.immunity = BLACK_HOLE.immunitySeconds;
+    this.emit('wormholeEnd', { toId });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Puppet frame
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One frame while puppeted (setPuppet): the pose belongs to the game mode. The universe keeps
+   * breathing and spinning, the pulse and the camera keep animating and the environment follows the
+   * pose; nothing moves the ship. The velocity lasts one frame: setPuppetPose sets it again.
+   */
+  private updatePuppet(dt: number): void {
+    const s = this.state;
+    const ship = s.ship;
+    s.time += dt;
+    ship.velocity.set(0, 0, 0);
+    ship.speed = 0;
+    ship.velocityDir.copy(ship.forward);
+    this.universe.update(s.time, ship.position);
+    this.measureSurface();
+    if (this.arena) this.updateArena();
+    this.updateFlightScale(this.speedScale, dt);
+    // Motion cues settle: no thrust, hyper or ghost while puppeted.
+    ship.thrust = clamp(ship.thrust * (1 - damp(dt, 0.25)), 0, 1);
+    ship.ghost *= 1 - damp(dt, 0.15);
+    ship.ghostInside *= 1 - damp(dt, 0.12);
+    ship.autopilot = this.pilot.mode;
+    this.updateEnvironment();
+    this.updateTarget();
+    this.updatePulse(dt);
+    this.updateCamera(dt);
   }
 
   // ---------------------------------------------------------------------------

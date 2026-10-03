@@ -83,6 +83,8 @@ export class Universe {
   private readonly baseParams: (readonly number[])[] = [];
   /** Per-nebula animation clocks (s) and the time of the previous update (NaN before the first). */
   private animClock: Float64Array = new Float64Array(0);
+  /** Per-nebula pinned animation clock (setFrozenClock); NaN = animating normally. */
+  private frozenClock: Float64Array;
   private lastTime = NaN;
   private readonly clearanceWorld: number[] = [];
   /** Result object reused by distance() (valid until the next call). */
@@ -140,6 +142,7 @@ export class Universe {
       this.byId.set(def.id, rt);
       return rt;
     });
+    this.frozenClock = new Float64Array(this.runtimes.length).fill(NaN);
   }
 
   get(id: string): NebulaRuntime | undefined {
@@ -159,6 +162,39 @@ export class Universe {
     return i >= 0 ? this.clearanceWorld[i] : 0;
   }
 
+  /**
+   * Pin nebula `id`'s animation clock at `clock` (s), or release it with null. While pinned its params
+   * are exactly `animate(base, clock)` (base = def.params ?? fractal.defaultParams, copied into the
+   * 16 floats first; just the copy for fractals without `animate`): the same numbers
+   * `frozenParams()` in src/game/firstlight/world.ts computes in Node, so a frozen puzzle arena on the
+   * GPU, the flight DE and the beam tracer all agree. The params change immediately (the ship-relative
+   * fields follow on the next update / refresh). A released clock resumes from the pinned value, so the
+   * breathing continues without a jump. Spin is not affected (it follows the sim clock).
+   */
+  setFrozenClock(id: string, clock: number | null): void {
+    const i = this.indexOf(id);
+    if (i < 0) return;
+    if (clock === null) {
+      this.frozenClock[i] = NaN;
+      return;
+    }
+    const c = Number.isFinite(clock) ? clock : 0;
+    this.frozenClock[i] = c;
+    if (this.animClock.length === this.runtimes.length) this.animClock[i] = c;
+    this.applyFrozenParams(i, c);
+  }
+
+  /** Release every pinned clock (mode exit). */
+  clearFrozenClocks(): void {
+    this.frozenClock.fill(NaN);
+  }
+
+  /** Pinned clock of nebula `id`, or null when it animates normally. */
+  frozenClockOf(id: string): number | null {
+    const i = this.indexOf(id);
+    return i >= 0 && Number.isFinite(this.frozenClock[i]) ? this.frozenClock[i] : null;
+  }
+
   /** Animate params & spin for `time`, then refresh ship-relative fields. */
   update(time: number, shipPos: THREE.Vector3): void {
     const n = this.runtimes.length;
@@ -170,15 +206,22 @@ export class Universe {
       const rt = this.runtimes[i];
       const def = rt.def;
       const animate = rt.fractal?.animate;
-      if (first) {
-        this.animClock[i] = time;
-      } else if (animate && dt > 0) {
-        const sdLocal = rt.scale > 0 ? rt.surfaceDistance / rt.scale : Infinity;
-        const rate = Number.isFinite(sdLocal) ? Math.min(1, Math.max(ANIM_MIN_RATE, sdLocal / ANIM_SLOW_LOCAL)) : 1;
-        const step = dt * rate;
-        this.animClock[i] += sdLocal < ANIM_SLOW_LOCAL ? this.guardedAnimStep(i, step, shipPos) : step;
+      const frozen = this.frozenClock[i];
+      if (Number.isFinite(frozen)) {
+        // Pinned (setFrozenClock): the clock stays put; params are rewritten from base every update.
+        this.animClock[i] = frozen;
+        this.applyFrozenParams(i, frozen);
+      } else {
+        if (first) {
+          this.animClock[i] = time;
+        } else if (animate && dt > 0) {
+          const sdLocal = rt.scale > 0 ? rt.surfaceDistance / rt.scale : Infinity;
+          const rate = Number.isFinite(sdLocal) ? Math.min(1, Math.max(ANIM_MIN_RATE, sdLocal / ANIM_SLOW_LOCAL)) : 1;
+          const step = dt * rate;
+          this.animClock[i] += sdLocal < ANIM_SLOW_LOCAL ? this.guardedAnimStep(i, step, shipPos) : step;
+        }
+        if (animate) animate(this.baseParams[i], this.animClock[i], rt.params);
       }
-      if (animate) animate(this.baseParams[i], this.animClock[i], rt.params);
       if (def.spinRate !== 0) {
         _q.setFromAxisAngle(this.spinAxisLocal[i], def.spinRate * time);
         rt.rotation.copy(this.baseRotation[i]).multiply(_q);
@@ -186,6 +229,15 @@ export class Universe {
       }
     }
     this.refresh(shipPos);
+  }
+
+  /** params = base (16 floats, zero-padded) then animate(base, clock) — mirrors world.ts frozenParams(). */
+  private applyFrozenParams(i: number, clock: number): void {
+    const rt = this.runtimes[i];
+    const base = this.baseParams[i];
+    const params = rt.params;
+    for (let k = 0; k < 16; k++) params[k] = k < base.length ? base[k] : 0;
+    rt.fractal?.animate?.(base, clock, params);
   }
 
   /**

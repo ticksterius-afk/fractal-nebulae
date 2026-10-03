@@ -31,6 +31,11 @@ jobs:
       # A shader that fails to compile shows visitors a black screen: validate every program first.
       - name: Validate shaders
         run: npm run check:shaders
+      # First Light: the beam tracer, the platform helpers, every authored level (solvable, minimal,
+      # no accidental solutions, reachable by the game's own placement) and the daily bundles (complete,
+      # valid, on schedule, >= 60 days ahead) must pass before a deploy.
+      - name: Validate First Light
+        run: npm run check:game
       - name: Type-check and build
         run: npm run build
       - uses: actions/configure-pages@v6

@@ -8,12 +8,16 @@
  * and the ray epsilon is cone-based (pixel angle × distance).
  *
  * Output is premultiplied (`vec4(emission + T·surface, 1 − T)`), blended ONE / ONE_MINUS_SRC_ALPHA.
+ *
+ * Game modes may add up to 4 accent point lights (RenderContext.accents: lit seeds, the beam's end)
+ * to the nebula they belong to: shaded on the surface hit, and as an analytic per-ray gas glow.
  */
 import * as THREE from 'three';
 import type { FractalDef, NebulaRuntime, QualityPreset } from '../core/types';
 import { clamp, lerp, smoothstep } from '../core/math';
 import { COMMON_GLSL, CAMERA_UNIFORMS_GLSL } from './shaders/common';
 import { FULLSCREEN_VERT, applyCameraUniforms, makeCameraUniforms, type RenderContext } from './RenderContext';
+import type { AccentLights } from './game/overlayTypes';
 
 // ---------------------------------------------------------------------------------------------
 // Look tuning (baked into the shader as #defines). All gains are dimensionless; lengths are
@@ -75,7 +79,19 @@ export const NEBULA_LOOK = {
   maxOut: 48,
   /** Static per-pixel jitter of the first step (0..0.9): trades gas banding for fine noise. */
   jitter: 0.9,
+  /**
+   * Accent point lights (game modes: lit seeds, the beam's end). Surface wrap-diffuse gain, light
+   * scattered by the surrounding gas onto faces turned away, silhouette rim pickup, and the gain of
+   * the analytic gas glow (peak ≈ 1.07 × gain × colour on a ray through the light's centre).
+   */
+  accentDiffuse: 1.0,
+  accentScatter: 0.08,
+  accentRim: 0.45,
+  accentGas: 0.06,
 } as const;
+
+/** Accent lights per nebula pass (= AccentBuffer.MAX; the uniform arrays are this long). */
+const MAX_ACCENTS = 4;
 
 /** Per-quality epsilon multiplier (larger = coarser, cheaper). */
 const QUALITY_DETAIL: Record<QualityPreset['name'], number> = { low: 1.5, medium: 1.2, high: 1.0, ultra: 0.85 };
@@ -315,6 +331,13 @@ uniform vec3 uWispOrigin;
 uniform float uEnvSamples;
 uniform float uSeed;
 uniform sampler3D uNoise;
+// Accent point lights (game overlay: lit seeds, the beam's end): local xyz + radius (smooth falloff
+// to 0), linear HDR rgb + 0. Read only outside the march loop (ANGLE: no dynamic uniform-array
+// indexing in the hot loop).
+#define NEB_MAX_ACCENTS ${MAX_ACCENTS}
+uniform vec4 uAccentPos[NEB_MAX_ACCENTS];
+uniform vec4 uAccentCol[NEB_MAX_ACCENTS];
+uniform int uAccentCount;
 
 #define NEB_NEAR_EMIT ${f(L.nearEmit)}
 #define NEB_NEAR_ABS ${f(L.nearAbsorb)}
@@ -344,6 +367,10 @@ uniform sampler3D uNoise;
 #define NEB_PULSE_ENV ${f(L.pulseEnv)}
 #define NEB_MAX_OUT ${f(L.maxOut)}
 #define NEB_JITTER ${f(L.jitter)}
+#define NEB_ACC_DIFFUSE ${f(L.accentDiffuse)}
+#define NEB_ACC_SCATTER ${f(L.accentScatter)}
+#define NEB_ACC_RIM ${f(L.accentRim)}
+#define NEB_ACC_GAS ${f(L.accentGas)}
 `;
 
 const TEMPLATE_BODY_GLSL = /* glsl */ `
@@ -541,6 +568,72 @@ void neb_segment(float d0, float d1, float dt, vec3 emitO, float sigmaO, vec4 tr
   T *= Ts;
 }
 
+// ---- accent point lights (lit seeds, the beam's end) ----
+// Each light has the smooth falloff k(r) = (1 − r²/R²)², zero beyond its radius R.
+
+// Surface: wrap-diffuse, a little light scattered by the surrounding gas (reaches faces turned
+// away), and rim pickup on silhouettes. No shadow rays (cheap; the lights sit in open space).
+vec3 neb_accentSurf(vec3 p, vec3 n, vec3 alb, float ao, float rimF) {
+  vec3 c = vec3(0.0);
+  for (int i = 0; i < NEB_MAX_ACCENTS; i++) {
+    if (i >= uAccentCount) break;
+    vec4 pr = uAccentPos[i];
+    vec3 toA = pr.xyz - p;
+    float r2 = dot(toA, toA);
+    float x = 1.0 - r2 / (pr.w * pr.w);
+    if (x <= 0.0) continue;
+    float ndl = dot(n, toA) * inversesqrt(max(r2, 1e-20));
+    float wrapD = clamp((ndl + NEB_WRAP) / (1.0 + NEB_WRAP), 0.0, 1.0);
+    vec3 lc = uAccentCol[i].rgb * (x * x);
+    c += lc * (alb * (wrapD * NEB_ACC_DIFFUSE * (0.5 + 0.5 * ao) + NEB_ACC_SCATTER * ao) + rimF * NEB_ACC_RIM);
+  }
+  return c;
+}
+
+// Ray parameter (local) of the accent light whose glow dominates this ray, or −1: the march records
+// the gas transmittance there (one compare per step) to dim the analytic glow behind dust.
+float neb_accentT(vec3 ro, vec3 rd) {
+  float best = 0.0;
+  float tA = -1.0;
+  for (int i = 0; i < NEB_MAX_ACCENTS; i++) {
+    if (i >= uAccentCount) break;
+    vec4 pr = uAccentPos[i];
+    vec3 rel = pr.xyz - ro;
+    float tc = dot(rel, rd);
+    float a = 1.0 - (dot(rel, rel) - tc * tc) / (pr.w * pr.w);
+    float w = a > 0.0 ? luminance(uAccentCol[i].rgb) * a * a * sqrt(a) : 0.0;
+    if (w > best) {
+      best = w;
+      tA = tc;
+    }
+  }
+  return tA;
+}
+
+// Gas lit by the accent lights: k(r) integrated in closed form over the visible part [ta, tb] of the
+// ray (closest-approach form; never a per-step light loop), normalised by R so the halo's peak does
+// not depend on the light's size. With u = s/R from the closest point and a = 1 − d²/R²:
+// ∫ (a − u²)² du = a²u − (2a/3)u³ + u⁵/5 (full chord: 16/15 · a^2.5).
+vec3 neb_accentGas(vec3 ro, vec3 rd, float ta, float tb) {
+  vec3 g = vec3(0.0);
+  for (int i = 0; i < NEB_MAX_ACCENTS; i++) {
+    if (i >= uAccentCount) break;
+    vec4 pr = uAccentPos[i];
+    float iR = 1.0 / pr.w;
+    vec3 rel = pr.xyz - ro;
+    float tc = dot(rel, rd);
+    float a = 1.0 - (dot(rel, rel) - tc * tc) * iR * iR;
+    if (a <= 0.0) continue;
+    float h = sqrt(a);
+    float u0 = clamp((ta - tc) * iR, -h, h);
+    float u1 = clamp((tb - tc) * iR, -h, h);
+    float i0 = u0 * (a * a - u0 * u0 * (a * (2.0 / 3.0) - 0.2 * u0 * u0));
+    float i1 = u1 * (a * a - u1 * u1 * (a * (2.0 / 3.0) - 0.2 * u1 * u1));
+    g += uAccentCol[i].rgb * max(i1 - i0, 0.0);
+  }
+  return g;
+}
+
 vec3 neb_shade(vec3 p, vec3 n, vec3 rd, vec4 trap, float t, float eps, int zero) {
 #ifdef FRACTAL_HAS_ALBEDO
   vec3 alb = fractalAlbedo(p, trap, n, uPalA, uPalB, uPalC, uPalD);
@@ -586,6 +679,9 @@ vec3 neb_shade(vec3 p, vec3 n, vec3 rd, vec4 trap, float t, float eps, int zero)
 
   // Hot knots: star-forming tips.
   col += uGlowNear * (smoothstep(0.08, 0.9, clamp(trap.w, 0.0, 1.0)) * NEB_HOT_SURF);
+
+  // Game accent lights (lit seeds, the beam's end).
+  if (uAccentCount > 0) col += neb_accentSurf(p, n, alb, ao, rimF);
   return col;
 }
 
@@ -616,6 +712,9 @@ void main() {
 
   bool pulseOn = uPulseParams.y > 0.0;
   vec3 pulseCol = neb_pulseColor();
+  // Accent lights: the march records the gas transmittance in front of the dominant one.
+  float tAcc = uAccentCount > 0 ? neb_accentT(ro, rd) : -1.0;
+  float TAcc = 1.0;
 
   float T = 1.0;
   vec3 C = vec3(0.0);
@@ -652,6 +751,7 @@ void main() {
       neb_segment(segD0, dc, segDt, segEmit, segSigma, dc < segD0 ? trap : segTrap, segGain, C, T);
       segDt = 0.0;
       if (tHalf < 0.0 && T < 0.5) tHalf = t;
+      if (t <= tAcc) TAcc = T;
       if (T < 0.004) { exhausted = false; break; }
     }
     if (ghostRun) {
@@ -725,6 +825,9 @@ void main() {
     segDt = max(segDt - max(t - t1, 0.0), 0.0);
     neb_segment(segD0, segD0, segDt, segEmit, segSigma, segTrap, segGain, C, T);
   }
+  // Gas lit by the accent lights along the visible ray: it ends at the surface hit / exhausted
+  // point (so a wall in front hides a light, while ghost-phased solids before it do not).
+  if (uAccentCount > 0) C += neb_accentGas(ro, rd, t0, min(t, t1)) * (TAcc * NEB_ACC_GAS);
 
   // Ran out of steps: hugging a surface → shade it; deep inside the structure → close the ray
   // with dim glowing haze instead of letting the sky show through a long tunnel.
@@ -832,6 +935,10 @@ export function createNebulaMaterial(fractal: FractalDef, quality: QualityPreset
     uEnvSamples: { value: 28 },
     uSeed: { value: 0 },
     uNoise: { value: getNebulaNoiseTexture() },
+    // vec4 arrays as flat Float32Arrays: three uploads them as-is (no per-frame flatten).
+    uAccentPos: { value: new Float32Array(MAX_ACCENTS * 4) },
+    uAccentCol: { value: new Float32Array(MAX_ACCENTS * 4) },
+    uAccentCount: { value: 0 },
   };
   const mat = new THREE.ShaderMaterial({
     name: `nebula:${fractal.kind}`,
@@ -1006,10 +1113,68 @@ export function updateNebulaUniforms(mat: THREE.ShaderMaterial, neb: NebulaRunti
     const shellGap = Math.abs(_rel.length() - rLocal);
     if (shellGap < renderBoundLocal + 3 * wLocal) {
       const age = clamp(pulse.age, 0, 1);
-      intensity = smoothstep(0, 0.04, age) * Math.pow(1 - age, 1.5);
+      const gain = Number.isFinite(pulse.gain) ? clamp(pulse.gain, 0, 1) : 1;
+      intensity = smoothstep(0, 0.04, age) * Math.pow(1 - age, 1.5) * gain;
       pulseVec.set(_rel.x, _rel.y, _rel.z, rLocal);
       pulseParams.set(wLocal, intensity);
     }
   }
   if (!(intensity > 0)) pulseParams.set(1, 0); // also a NaN pulse age: never rely on GPU NaN compares
+
+  // ---- accent point lights (game overlay), for the nebula they belong to only ----
+  u.uAccentCount.value = copyAccents(
+    ctx.accents,
+    neb.def.id,
+    renderBoundLocal,
+    bound,
+    u.uAccentPos.value as Float32Array,
+    u.uAccentCol.value as Float32Array,
+  );
+}
+
+/** Max accent colour channel sent to the GPU (linear HDR). */
+const ACCENT_COLOUR_MAX = 64;
+
+/**
+ * Copy the valid accent lights of `nebId` into the uniform arrays (compacted, NaN-guarded; lights
+ * whose sphere misses the render sphere are dropped). Returns the count for uAccentCount.
+ */
+function copyAccents(
+  acc: AccentLights | null | undefined,
+  nebId: string,
+  renderBoundLocal: number,
+  bound: number,
+  dstP: Float32Array,
+  dstC: Float32Array,
+): number {
+  if (!acc || acc.nebulaId !== nebId || !(acc.count > 0)) return 0;
+  const srcP = acc.posRadius;
+  const srcC = acc.colour;
+  const m = Math.min(Math.floor(acc.count), MAX_ACCENTS, Math.floor(srcP.length / 4), Math.floor(srcC.length / 4));
+  const minRadius = bound * 1e-6;
+  let n = 0;
+  for (let i = 0; i < m; i++) {
+    const o = i * 4;
+    const x = srcP[o];
+    const y = srcP[o + 1];
+    const z = srcP[o + 2];
+    const rad = srcP[o + 3];
+    const r = srcC[o];
+    const g = srcC[o + 1];
+    const b = srcC[o + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !(rad > minRadius) || !Number.isFinite(rad)) continue;
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b) || r + g + b <= 0) continue;
+    if (Math.hypot(x, y, z) - rad >= renderBoundLocal) continue; // cannot touch anything drawn
+    const d = n * 4;
+    dstP[d] = x;
+    dstP[d + 1] = y;
+    dstP[d + 2] = z;
+    dstP[d + 3] = rad;
+    dstC[d] = clamp(r, 0, ACCENT_COLOUR_MAX);
+    dstC[d + 1] = clamp(g, 0, ACCENT_COLOUR_MAX);
+    dstC[d + 2] = clamp(b, 0, ACCENT_COLOUR_MAX);
+    dstC[d + 3] = 0;
+    n++;
+  }
+  return n;
 }

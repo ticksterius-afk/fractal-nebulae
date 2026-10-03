@@ -6,8 +6,8 @@
  *   npx tsx tools/check-all-shaders.ts nebula     # only programs whose name contains "nebula"
  *
  * Programs are built through the real factories (createNebulaMaterial, createBlackHoleMaterial,
- * SkySystem, the star groups, BloomPass, TaaPass, CompositePass), so the defines are exactly the
- * ones the renderer uses. Identical (stage, defines, source) triples are validated once.
+ * SkySystem, the star groups, the game-overlay layers, BloomPass, LayerSumPass, TaaPass, CompositePass), so the
+ * defines are exactly the ones the renderer uses. Identical (stage, defines, source) triples are validated once.
  * Also asserts the project-wide shader contract: no glslVersion (three must declare pc_fragColor),
  * no hand-declared location-0 output, and no `#version` line in any source.
  * Exits with code 1 if anything fails.
@@ -26,9 +26,13 @@ import { NearStars } from '../src/render/stars/NearStars';
 import { DustMotes } from '../src/render/stars/DustMotes';
 import { NebulaStars } from '../src/render/stars/NebulaStars';
 import { makeSharedSpriteUniforms } from '../src/render/stars/sprites';
+import { LineSystem } from '../src/render/game/LineSystem';
+import { GlyphSprites } from '../src/render/game/GlyphSprites';
+import { GameStars } from '../src/render/game/GameStars';
 import { BloomPass } from '../src/render/post/BloomPass';
 import { TaaPass } from '../src/render/post/TaaPass';
 import { CompositePass } from '../src/render/post/CompositePass';
+import { LayerSumPass } from '../src/render/post/LayerSumPass';
 import { checkShader } from './glsl-check';
 
 type ShaderLike = {
@@ -104,10 +108,27 @@ const dust = new DustMotes(16, shared);
 dust.meshes.forEach((m, i) => check(`stars-dust-${i}`, m.material as THREE.ShaderMaterial));
 check('stars-nebula', new NebulaStars(runtimes, shared).material);
 
-// ---- post: bloom chain, TAA resolve, final composite (with WORMHOLE_GLSL) ----
+// ---- game overlay (quality-independent): lines, glyphs, star sprites × visible/occluded pass ----
+// The two passes share their sources (one program each in three); both are listed to enforce it.
+const passNames = ['visible', 'occluded'];
+for (const [kind, layer] of [
+  ['lines', new LineSystem(shared)],
+  ['glyphs', new GlyphSprites(shared)],
+  ['stars', new GameStars(shared)],
+] as const) {
+  layer.materials.forEach((m, i) => check(`overlay-${kind}-${passNames[i]}`, m));
+  const [a, b] = layer.materials;
+  if ((!filter || `overlay-${kind}`.includes(filter)) && (a.vertexShader !== b.vertexShader || a.fragmentShader !== b.fragmentShader)) {
+    console.log(`✘ overlay-${kind}: the visible and occluded passes must share their sources (one program)`);
+    failures.push(`overlay-${kind}-shared-sources`);
+  }
+}
+
+// ---- post: bloom chain (+ its layer sum), TAA resolve, final composite (with WORMHOLE_GLSL) ----
 const bloom = new BloomPass(6);
 const bloomNames = ['bloom-down-first', 'bloom-down', 'bloom-up'];
 bloom.compileObjects().forEach((o, i) => check(bloomNames[i] ?? `bloom-${i}`, (o as THREE.Mesh).material as THREE.ShaderMaterial));
+check('layer-sum', new LayerSumPass().material);
 new TaaPass().compileObjects().forEach((o) => check('taa-resolve', (o as THREE.Mesh).material as THREE.ShaderMaterial));
 check('composite', new CompositePass().material);
 

@@ -1,0 +1,1694 @@
+/*
+ * First Light HUD (design/60-first-light-build.md §H). Voyage tokens from src/styles/base.css;
+ * every class is prefixed `flh-` (the Voyage flash queue already owns `fl-`).
+ * Mounted inside the in-flight layer (.fn-flight): pointer-events none unless a control opts in.
+ */
+
+.flh {
+  /* Teal = lit, ember = unlit, gold = the beam / ✦ (the only warm UI colour, as in the world). */
+  --flh-lit: #74f4d4;
+  --flh-lit-rgb: 116, 244, 212;
+  --flh-ember: #ff9a62;
+  --flh-ember-rgb: 255, 154, 98;
+  --flh-gold: #ffe2a6;
+  --flh-gold-rgb: 255, 226, 166;
+  --flh-bad: #ff8590;
+  --flh-bad-rgb: 255, 133, 144;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.flh-play {
+  position: absolute;
+  inset: 0;
+}
+
+/* Fade the play HUD under the Atlas; the placing parts under the solved card. */
+.flh-play,
+.flh-bc,
+.flh-tr,
+.flh-gauge,
+.flh-reason,
+.flh-ctip,
+.flh-tl .flh-hint {
+  transition: opacity 0.6s var(--ease-soft), visibility 0s linear 0s;
+}
+
+.flh.is-atlas .flh-play,
+.flh.is-solved .flh-bc,
+.flh.is-solved .flh-tr,
+.flh.is-solved .flh-gauge,
+.flh.is-solved .flh-reason,
+.flh.is-solved .flh-ctip,
+.flh.is-solved .flh-hint {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.6s var(--ease-soft), visibility 0s linear 0.6s;
+}
+
+/* Shared small parts --------------------------------------------------------------------- */
+
+.flh-k {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+.flh-v {
+  font-size: var(--fs-label);
+  color: var(--fn-text);
+  white-space: nowrap;
+}
+
+.flh-mark {
+  color: var(--flh-gold);
+  text-shadow: 0 0 8px rgba(var(--flh-gold-rgb), 0.6), 0 0 18px rgba(var(--flh-gold-rgb), 0.25);
+  font-family: var(--font-ui);
+  line-height: 1;
+}
+
+.flh-ico {
+  display: block;
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+}
+
+/* Key chips inside the First Light HUD never drop below 10 px (the mouse label is 0.92 em). */
+.flh .kc {
+  font-size: max(10px, var(--fs-micro));
+}
+
+.flh-steps {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.flh-steps i {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(var(--fn-accent-rgb), 0.55);
+  transform: rotate(45deg);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+
+.flh-steps i.is-on {
+  background: var(--fn-accent);
+  box-shadow: 0 0 6px rgba(var(--fn-accent-rgb), 0.7);
+}
+
+/* Pill buttons (hint chip, Atlas, copy, close). */
+.flh-pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 13px 5px 10px;
+  border: 1px solid var(--fn-line-strong);
+  border-radius: 999px;
+  background: rgba(6, 10, 22, 0.34);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: var(--fn-text);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-shadow: none;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.3s var(--ease-soft), color 0.3s, background 0.3s, box-shadow 0.3s, opacity 0.5s;
+}
+
+.flh-pill:hover:not(:disabled) {
+  border-color: rgba(var(--fn-accent-rgb), 0.7);
+  color: var(--fn-text-strong);
+  background: rgba(var(--fn-accent-rgb), 0.08);
+}
+
+.flh-pill:focus-visible,
+.flh-btn:focus-visible,
+.flh-mg:focus-visible,
+.flh-ur:focus-visible,
+.flh-x:focus-visible {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(var(--fn-accent-rgb), 0.8), 0 0 18px rgba(var(--fn-accent-rgb), 0.25);
+}
+
+.flh-pill .flh-ico {
+  color: var(--fn-accent);
+}
+
+.flh-pill-t {
+  padding-left: 0.1em;
+}
+
+.flh-pill--small {
+  padding: 3px 11px;
+  gap: 7px;
+}
+
+.flh-pill--accent {
+  border-color: rgba(var(--fn-accent-rgb), 0.55);
+  background: linear-gradient(180deg, rgba(var(--fn-accent-rgb), 0.16), rgba(var(--fn-accent-rgb), 0.05));
+  color: var(--fn-text-strong);
+}
+
+/* Small round close button. */
+.flh-x {
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fn-secondary);
+  cursor: pointer;
+  outline: none;
+  transition: color 0.25s, border-color 0.25s;
+}
+
+.flh-x:hover {
+  color: var(--fn-text-strong);
+  border-color: var(--fn-line-strong);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Top-left: level header + hint panel                                                       */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-tl {
+  position: absolute;
+  left: var(--edge);
+  top: var(--edge);
+  width: clamp(240px, 24vw, 400px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.flh-head {
+  position: relative;
+  padding: 2px 0 2px 14px;
+  max-width: 100%;
+}
+
+.flh-head::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(var(--fn-accent-rgb), 0.75), rgba(var(--fn-accent-rgb), 0.05));
+  box-shadow: 0 0 8px rgba(var(--fn-accent-rgb), 0.35);
+}
+
+.flh-head.is-daily::before {
+  background: linear-gradient(180deg, rgba(var(--flh-gold-rgb), 0.8), rgba(var(--flh-gold-rgb), 0.05));
+  box-shadow: 0 0 8px rgba(var(--flh-gold-rgb), 0.3);
+}
+
+.flh-kicker {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+.flh-name {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-name);
+  letter-spacing: 0.06em;
+  line-height: 1.12;
+  color: var(--fn-text-strong);
+}
+
+.flh-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.flh-hint {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 11px 14px 13px 16px;
+  pointer-events: auto;
+  text-shadow: none;
+  animation: flh-rise 0.7s var(--ease-out) backwards;
+}
+
+.flh-hint-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flh-hint-k {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.flh-hint-head .flh-x {
+  margin-left: auto;
+  margin-right: -6px;
+}
+
+.flh-hint-text {
+  margin: 8px 0 0;
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-label);
+  line-height: 1.55;
+  color: var(--fn-text);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.flh-hint-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 11px;
+}
+
+.flh-hint-foot:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+.flh-hint-warn {
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: rgba(var(--flh-gold-rgb), 0.85);
+}
+
+@keyframes flh-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Top-centre: seed chips                                                                    */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-seeds {
+  position: absolute;
+  left: 50%;
+  top: var(--edge);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.flh-seed-row {
+  --sd: clamp(14px, calc(1.05 * var(--u)), 22px);
+  display: flex;
+  align-items: center;
+  gap: clamp(9px, calc(0.8 * var(--u)), 15px);
+  min-height: var(--sd);
+}
+
+.flh-seed {
+  --a: 0;
+  position: relative;
+  display: block;
+  width: var(--sd);
+  height: var(--sd);
+}
+
+.flh-seed.is-echo {
+  width: calc(var(--sd) * 0.68);
+  height: calc(var(--sd) * 0.68);
+}
+
+.flh-seed-gap {
+  display: block;
+  width: 1px;
+  height: calc(var(--sd) * 0.8);
+  margin: 0 2px;
+  background: var(--fn-line-strong);
+}
+
+/* Unlit: an ember outline that brightens with "almost"; lit: a teal diamond with a bloom. */
+.flh-seed-d {
+  position: absolute;
+  inset: 16%;
+  box-sizing: border-box;
+  transform: rotate(45deg);
+  border: 1.5px solid rgba(var(--flh-ember-rgb), calc(0.4 + 0.6 * var(--a)));
+  background: rgba(var(--flh-ember-rgb), calc(0.3 * var(--a) * var(--a)));
+  box-shadow:
+    0 0 calc(2px + 12px * var(--a)) rgba(var(--flh-ember-rgb), calc(0.12 + 0.6 * var(--a))),
+    inset 0 0 calc(5px * var(--a)) rgba(var(--flh-ember-rgb), calc(0.5 * var(--a)));
+  transition: background 0.6s var(--ease-soft), border-color 0.6s var(--ease-soft), box-shadow 0.6s var(--ease-soft),
+    transform 0.6s var(--ease-out);
+}
+
+.flh-seed.is-lit .flh-seed-d {
+  border-color: rgba(var(--flh-lit-rgb), 0.95);
+  background: radial-gradient(circle at 50% 50%, #f2fffb 0%, var(--flh-lit) 45%, rgba(var(--flh-lit-rgb), 0.75) 100%);
+  box-shadow: 0 0 9px rgba(var(--flh-lit-rgb), 0.75), 0 0 22px rgba(var(--flh-lit-rgb), 0.35);
+  transform: rotate(45deg) scale(1.08);
+}
+
+/* A ring breathes out once when a seed ignites. */
+.flh-seed::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--flh-lit-rgb), 0.8);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.flh-seed.is-lit::after {
+  animation: flh-ignite 1.3s var(--ease-out);
+}
+
+@keyframes flh-ignite {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+.flh-seed-label {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.3em;
+  padding-left: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-faint);
+  transition: color 0.8s var(--ease-soft);
+}
+
+.flh-seed-label.is-done {
+  color: var(--flh-lit);
+  text-shadow: 0 0 10px rgba(var(--flh-lit-rgb), 0.45), var(--legible, 0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Top-right: hint chip + Atlas                                                              */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-tr {
+  position: absolute;
+  right: var(--edge);
+  top: var(--edge);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flh-hintchip {
+  animation: flh-fade 1.2s var(--ease-soft) backwards;
+}
+
+.flh-hintchip .flh-steps {
+  margin-left: 2px;
+}
+
+@keyframes flh-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Bottom-centre: mass orbs, undo / redo, control line                                       */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-bc {
+  position: absolute;
+  left: 50%;
+  bottom: var(--edge);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--edge));
+}
+
+.flh-masses {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flh-mass-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.flh-mass-row:empty {
+  display: none;
+}
+
+/* One button per size: orbs above, key chip + name below. */
+.flh-mg {
+  --o1: clamp(9px, calc(0.72 * var(--u)), 14px);
+  --o: var(--o1);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 7px 12px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-shadow: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.35s var(--ease-soft), background 0.35s var(--ease-soft), box-shadow 0.4s var(--ease-soft);
+}
+
+.flh-mg--medium {
+  --o: calc(var(--o1) * 1.45);
+}
+
+.flh-mg--heavy {
+  --o: calc(var(--o1) * 2);
+}
+
+.flh-mg:hover {
+  border-color: var(--fn-line);
+  background: rgba(6, 10, 22, 0.28);
+}
+
+.flh-mg.is-selected {
+  border-color: rgba(var(--fn-accent-rgb), 0.5);
+  background: linear-gradient(180deg, rgba(var(--fn-accent-rgb), 0.11), rgba(var(--fn-accent-rgb), 0.02));
+  box-shadow: 0 0 20px rgba(var(--fn-accent-rgb), 0.12), inset 0 0 12px rgba(var(--fn-accent-rgb), 0.06);
+}
+
+.flh-orbs {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--o) * 0.38 + 2px);
+  min-height: calc(var(--o1) * 2);
+}
+
+/* Available: a filled, softly lit sphere. Placed: a hollow ring (the mass is out in the world). */
+.flh-orb {
+  display: block;
+  box-sizing: border-box;
+  width: var(--o);
+  height: var(--o);
+  border-radius: 50%;
+  border: 1px solid rgba(235, 246, 255, 0.85);
+  background: radial-gradient(circle at 36% 32%, #ffffff 0%, rgba(228, 241, 255, 0.95) 30%, rgba(160, 200, 236, 0.86) 72%, rgba(118, 162, 210, 0.82) 100%);
+  box-shadow: 0 0 calc(var(--o) * 0.6) rgba(200, 232, 255, 0.4), 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: background 0.45s var(--ease-soft), border-color 0.45s var(--ease-soft), box-shadow 0.45s var(--ease-soft),
+    transform 0.45s var(--ease-out);
+}
+
+.flh-orb.is-used {
+  border-color: rgba(160, 220, 255, 0.42);
+  background: rgba(6, 10, 22, 0.25);
+  box-shadow: none;
+  transform: scale(0.94);
+}
+
+.flh-mg.is-selected .flh-orb:not(.is-used) {
+  border-color: #e9fbff;
+  box-shadow: 0 0 calc(var(--o) * 0.7) rgba(var(--fn-accent-rgb), 0.6), 0 0 2px rgba(var(--fn-accent-rgb), 0.9), 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.flh-mg-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+  transition: color 0.35s;
+}
+
+.flh-mg.is-selected .flh-mg-label {
+  color: var(--fn-accent);
+}
+
+.flh-mg.is-selected .flh-mg-label .kc {
+  border-color: rgba(var(--fn-accent-rgb), 0.7);
+  color: var(--fn-text-strong);
+  box-shadow: 0 0 8px rgba(var(--fn-accent-rgb), 0.3), inset 0 -1px 0 rgba(var(--fn-accent-rgb), 0.3);
+}
+
+.flh-mg.is-spent .flh-mg-label {
+  opacity: 0.6;
+}
+
+/* Undo / redo. */
+.flh-ur {
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--fn-line);
+  border-radius: 50%;
+  background: rgba(6, 10, 22, 0.3);
+  color: var(--fn-text);
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+  transition: opacity 0.35s, border-color 0.3s, color 0.3s;
+}
+
+.flh-ur:hover:not(:disabled) {
+  border-color: rgba(var(--fn-accent-rgb), 0.6);
+  color: var(--fn-accent);
+}
+
+.flh-ur:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* Contextual control line. */
+.flh-ctl-wrap {
+  display: grid;
+  justify-items: center;
+}
+
+.flh-ctl {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  opacity: 0.86;
+  animation: flh-fade 0.5s var(--ease-soft) backwards;
+}
+
+.flh-ctl-i,
+.flh-at-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.flh-ctl-t {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Depth gauge (right of the reticle) + placement reason (under it)                          */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-gauge {
+  --gh: 76px;
+  --d: 0;
+  position: absolute;
+  left: calc(50% + 44px);
+  top: calc(50% - 38px);
+  width: 64px;
+  height: var(--gh);
+}
+
+.flh-gauge-track {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(160, 220, 255, 0.14);
+  overflow: hidden;
+}
+
+.flh-gauge-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+  transform: scaleY(var(--d));
+  background: linear-gradient(0deg, rgba(var(--fn-accent-rgb), 0.12), rgba(var(--fn-accent-rgb), 0.95));
+  box-shadow: 0 0 6px rgba(var(--fn-accent-rgb), 0.5);
+}
+
+.flh-gauge-tick {
+  position: absolute;
+  left: -3px;
+  width: 8px;
+  height: 1px;
+  background: rgba(225, 238, 255, 0.4);
+}
+
+.flh-gauge-tick--top {
+  top: 0;
+  width: 11px;
+}
+
+.flh-gauge-tick--mid {
+  top: 50%;
+  width: 5px;
+  left: -1.5px;
+  opacity: 0.6;
+}
+
+.flh-gauge-tick--bot {
+  bottom: 0;
+}
+
+.flh-gauge-mark {
+  position: absolute;
+  left: 4px;
+  bottom: -4px;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--fn-accent);
+  filter: drop-shadow(0 0 3px rgba(var(--fn-accent-rgb), 0.8));
+  transform: translateY(calc(var(--d) * var(--gh) * -1));
+  transition: border-color 0.3s;
+}
+
+.flh-gauge-k {
+  position: absolute;
+  left: 13px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fn-faint);
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.flh-gauge-k--top {
+  top: -0.5em;
+}
+
+.flh-gauge-k--bot {
+  bottom: -0.5em;
+}
+
+.flh-gauge.is-over .flh-gauge-k--top {
+  color: var(--fn-warn);
+}
+
+.flh-gauge.is-illegal .flh-gauge-fill {
+  background: linear-gradient(0deg, rgba(var(--flh-bad-rgb), 0.12), rgba(var(--flh-bad-rgb), 0.95));
+  box-shadow: 0 0 6px rgba(var(--flh-bad-rgb), 0.5);
+}
+
+.flh-gauge.is-illegal .flh-gauge-mark {
+  border-left-color: var(--flh-bad);
+  filter: drop-shadow(0 0 3px rgba(var(--flh-bad-rgb), 0.8));
+}
+
+.flh-reason {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 30px);
+  transform: translateX(-50%);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.24em;
+  padding-left: 0.24em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--flh-bad);
+  text-shadow: 0 0 10px rgba(var(--flh-bad-rgb), 0.4), var(--legible, 0 1px 2px rgba(0, 0, 0, 0.7));
+  animation: flh-fade 0.3s var(--ease-soft) backwards;
+}
+
+/* Cursor tip: positioned per frame by transform only. */
+.flh-ctip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 3px 9px 4px;
+  border-radius: 5px;
+  border: 1px solid var(--fn-line);
+  background: rgba(6, 10, 22, 0.6);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--fn-text);
+  text-shadow: none;
+  will-change: transform;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Bottom-left: one-time physics tip                                                         */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-tip {
+  position: absolute;
+  left: var(--edge);
+  /* Clear of the control line at the bottom edge. */
+  bottom: calc(var(--edge) + 46px);
+  box-sizing: border-box;
+  width: clamp(240px, 24vw, 420px);
+  padding: 11px 18px 13px 16px;
+  border-radius: var(--fn-radius);
+  border: 1px solid rgba(160, 220, 255, 0.12);
+  border-left-color: rgba(var(--fn-accent-rgb), 0.45);
+  background: rgba(6, 10, 22, 0.36);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  text-shadow: none;
+  transition: opacity 0.7s var(--ease-soft), transform 0.7s var(--ease-soft);
+  animation: flh-rise 0.9s var(--ease-out) backwards;
+}
+
+.flh-tip.is-out {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.flh-tip-label {
+  margin-bottom: 5px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.flh-tip-text {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-label);
+  line-height: 1.55;
+  color: var(--fn-text);
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Atlas                                                                                     */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-atlas {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: var(--edge);
+  box-sizing: border-box;
+  pointer-events: auto;
+  text-shadow: none;
+  background: radial-gradient(ellipse 80% 70% at 50% 48%, rgba(2, 4, 12, 0.32), rgba(1, 2, 8, 0.74));
+  opacity: 0;
+  transition: opacity 0.5s var(--ease-soft);
+}
+
+.flh-atlas.is-open {
+  opacity: 1;
+}
+
+/* Fading in or out: the veil must not eat clicks meant for the canvas (or re-select a level). */
+.flh-atlas:not(.is-open) {
+  pointer-events: none;
+}
+
+.flh-at-card {
+  box-sizing: border-box;
+  width: min(940px, 100%);
+  max-height: calc(100vh - 2 * var(--edge));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 2vw, 30px) clamp(16px, 2.2vw, 34px) clamp(12px, 1.4vw, 20px);
+  transform: translateY(12px) scale(0.988);
+  transition: transform 0.7s var(--ease-out);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--fn-accent-rgb), 0.25) transparent;
+}
+
+.flh-atlas.is-open .flh-at-card {
+  transform: none;
+}
+
+.flh-at-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--fn-line);
+}
+
+.flh-at-kicker {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--fn-accent);
+}
+
+.flh-at-title {
+  margin: 4px 0 4px;
+  font-family: var(--font-ui);
+  font-weight: 300;
+  font-size: clamp(28px, calc(2.6 * var(--u)), 54px);
+  line-height: 1;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--fn-text-strong);
+  text-shadow: 0 0 22px rgba(var(--fn-accent-rgb), 0.35);
+}
+
+.flh-at-sub {
+  margin: 0;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-weight: 300;
+  font-size: var(--fs-label);
+  color: var(--fn-secondary);
+}
+
+.flh-at-side {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: none;
+}
+
+.flh-at-marks {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.flh-at-marks .flh-mark {
+  font-size: var(--fs-value);
+}
+
+.flh-at-marks-v {
+  font-size: var(--fs-value);
+  color: var(--fn-text-strong);
+}
+
+.flh-at-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+/* One strip per chapter: who / what on the left, the constellation on the right. */
+.flh-ch {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.25fr);
+  align-items: center;
+  gap: clamp(14px, 2vw, 30px);
+  padding: 11px 16px 9px;
+  border: 1px solid rgba(160, 220, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(6, 12, 26, 0.26);
+  transition: border-color 0.3s var(--ease-soft), background 0.3s var(--ease-soft);
+}
+
+.flh-ch:focus-within,
+.flh-ch:hover:not(.is-locked) {
+  border-color: rgba(var(--fn-accent-rgb), 0.26);
+  background: rgba(20, 36, 60, 0.26);
+}
+
+.flh-ch-neb {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+.flh-ch-name {
+  margin: 2px 0 3px;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-name);
+  line-height: 1.1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fn-text-strong);
+}
+
+.flh-ch-rule {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-weight: 300;
+  font-size: var(--fs-label);
+  line-height: 1.45;
+  color: rgba(225, 238, 255, 0.72);
+}
+
+.flh-ch-map {
+  min-width: 0;
+}
+
+.flh-ch-top {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.flh-ch-top .flh-v {
+  font-size: var(--fs-micro);
+}
+
+.flh-cons {
+  position: relative;
+  height: 64px; /* CONS_H in AtlasPanel.ts */
+}
+
+.flh-cons-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.flh-cons-lines line {
+  stroke: rgba(160, 220, 255, 0.2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.flh-cons-lines line.is-lit {
+  stroke: rgba(var(--flh-lit-rgb), 0.6);
+  filter: drop-shadow(0 0 3px rgba(var(--flh-lit-rgb), 0.6));
+}
+
+.flh-node {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+}
+
+.flh-node:disabled {
+  cursor: default;
+}
+
+.flh-node-g {
+  display: block;
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  transform: rotate(45deg);
+  border: 1.5px solid rgba(160, 220, 255, 0.55);
+  background: rgba(6, 10, 22, 0.8);
+  transition: transform 0.35s var(--ease-out), background 0.35s, border-color 0.35s, box-shadow 0.35s;
+}
+
+.flh-node.is-solved .flh-node-g {
+  border-color: var(--flh-lit);
+  background: radial-gradient(circle, #f2fffb 0%, var(--flh-lit) 60%);
+  box-shadow: 0 0 8px rgba(var(--flh-lit-rgb), 0.7), 0 0 16px rgba(var(--flh-lit-rgb), 0.3);
+}
+
+.flh-node.is-help .flh-node-g {
+  background: rgba(var(--flh-lit-rgb), 0.3);
+  box-shadow: 0 0 6px rgba(var(--flh-lit-rgb), 0.35);
+}
+
+.flh-node:hover:not(:disabled) .flh-node-g,
+.flh-node:focus-visible .flh-node-g {
+  transform: rotate(45deg) scale(1.35);
+  border-color: var(--fn-text-strong);
+}
+
+/* The level the player would resume: a slow cyan ring. */
+.flh-node.is-current::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--fn-accent-rgb), 0.85);
+  box-shadow: 0 0 10px rgba(var(--fn-accent-rgb), 0.35), inset 0 0 6px rgba(var(--fn-accent-rgb), 0.2);
+  animation: flh-breathe 3.6s ease-in-out infinite;
+}
+
+.flh-node:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--fn-accent-rgb), 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 14px rgba(var(--fn-accent-rgb), 0.35);
+}
+
+@keyframes flh-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.flh-node-star {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-micro);
+  line-height: 1;
+  color: var(--flh-gold);
+  text-shadow: 0 0 6px rgba(var(--flh-gold-rgb), 0.7);
+}
+
+.flh-node-n {
+  position: absolute;
+  top: calc(100% - 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--fs-micro);
+  line-height: 1;
+  color: var(--fn-faint);
+  transition: color 0.3s;
+}
+
+.flh-node:hover .flh-node-n,
+.flh-node:focus-visible .flh-node-n,
+.flh-node.is-current .flh-node-n {
+  color: var(--fn-text);
+}
+
+.flh-ch-cap {
+  min-height: 1.4em;
+  margin-top: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  color: var(--fn-text);
+}
+
+.flh-ch.is-locked {
+  opacity: 0.5;
+}
+
+.flh-ch.is-locked .flh-ch-cap {
+  color: var(--fn-secondary);
+  font-style: italic;
+}
+
+.flh-ch.is-complete .flh-ch-top .flh-v {
+  color: var(--flh-lit);
+}
+
+/* Daily strip: gold accents (the beam's colour) and a play button. */
+.flh-daily {
+  border-left: 2px solid rgba(var(--flh-gold-rgb), 0.45);
+}
+
+.flh-daily-k {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  color: rgba(var(--flh-gold-rgb), 0.9);
+}
+
+.flh-daily-date {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--fn-secondary);
+}
+
+.flh-daily-name {
+  font-size: var(--fs-value);
+  letter-spacing: 0.12em;
+}
+
+.flh-daily-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+}
+
+.flh-daily-stats {
+  display: flex;
+  gap: 20px;
+}
+
+.flh-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.flh-daily-play {
+  padding: 7px 20px;
+  font-size: var(--fs-label);
+  letter-spacing: 0.3em;
+}
+
+.flh-at-foot {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 14px;
+  opacity: 0.8;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Solved card                                                                               */
+/* ---------------------------------------------------------------------------------------- */
+
+.flh-solved {
+  position: absolute;
+  left: 50%;
+  bottom: max(var(--edge), 5vh);
+  z-index: 2;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: min(620px, calc(100vw - 2 * var(--edge)));
+  max-height: calc(100vh - 2 * var(--edge));
+  outline: none;
+  text-shadow: var(--legible, 0 1px 2px rgba(0, 0, 0, 0.7));
+  transition: opacity 0.6s var(--ease-soft), transform 0.6s var(--ease-soft);
+}
+
+.flh-solved.is-out {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
+
+.flh-solved.is-out * {
+  pointer-events: none !important;
+}
+
+/* The Voyage flash lane (M, I, …) would print across the card's text: fade it while the card is up.
+   Opacity, not visibility, so the role=status lane still announces to screen readers. */
+.fn-flight:has(> .fn-mode-layer > .flh.is-solved) > .fn-flash {
+  opacity: 0;
+  transition: opacity 0.6s var(--ease-soft);
+}
+
+/* A soft pool of darkness behind the text: legible without a box over the lit nebula. */
+.flh-sv-glow {
+  position: absolute;
+  inset: -18% -22%;
+  z-index: -1;
+  background: radial-gradient(closest-side, rgba(2, 5, 12, 0.62), rgba(2, 5, 12, 0.32) 55%, rgba(2, 5, 12, 0) 100%);
+  pointer-events: none;
+  animation: flh-fade 1.4s var(--ease-soft) backwards;
+}
+
+.flh-sv-inner {
+  --n: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.flh-sv-star {
+  position: relative;
+  width: clamp(64px, calc(6 * var(--u)), 110px);
+  height: clamp(64px, calc(6 * var(--u)), 110px);
+  margin-bottom: -6px;
+}
+
+/* One quiet ring leaves the star as it blooms (the ignition pulse, once). */
+.flh-sv-star::before {
+  content: '';
+  position: absolute;
+  inset: 28%;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--flh-lit-rgb), 0.7);
+  box-shadow: 0 0 14px rgba(var(--flh-lit-rgb), 0.3);
+  opacity: 0;
+  animation: flh-ring 2.6s 0.35s cubic-bezier(0.12, 0.7, 0.3, 1) both;
+}
+
+@keyframes flh-ring {
+  from {
+    opacity: 0.85;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 0;
+    transform: scale(3.4);
+  }
+}
+
+.flh-star {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.flh-star-spikes {
+  transform-origin: 0 0;
+  animation: flh-spikes 1.8s 0.25s var(--ease-out) backwards, flh-twinkle 7s 2.2s ease-in-out infinite;
+}
+
+.flh-star-halo {
+  transform-origin: 0 0;
+  animation: flh-halo 1.6s 0.1s var(--ease-out) backwards, flh-glow 5.5s 1.8s ease-in-out infinite;
+}
+
+.flh-star-core {
+  transform-origin: 0 0;
+  animation: flh-core 0.9s var(--ease-out) backwards;
+}
+
+@keyframes flh-core {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes flh-halo {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+@keyframes flh-spikes {
+  from {
+    opacity: 0;
+    transform: scale(0.15) rotate(-12deg);
+  }
+}
+
+@keyframes flh-twinkle {
+  0%,
+  100% {
+    opacity: 1;
+    transform: rotate(0deg);
+  }
+  50% {
+    opacity: 0.78;
+    transform: rotate(1.5deg);
+  }
+}
+
+@keyframes flh-glow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.flh-sv-kicker {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.46em;
+  padding-left: 0.46em;
+  text-transform: uppercase;
+  color: rgba(var(--flh-lit-rgb), 0.85);
+  animation: flh-fade 1.2s 0.4s var(--ease-soft) backwards;
+}
+
+.flh-sv-title {
+  margin: 0.16em 0 0;
+  font-family: var(--font-ui);
+  font-weight: 300;
+  font-size: var(--fs-banner);
+  line-height: 1.08;
+  letter-spacing: 0.2em;
+  padding-left: 0.2em;
+  text-transform: uppercase;
+  color: var(--fn-text-strong);
+  text-shadow: 0 0 26px rgba(var(--flh-lit-rgb), 0.38), var(--legible, 0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+.flh-sv-word {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.flh-sv-space {
+  display: inline-block;
+  width: 0.32em;
+}
+
+.flh-sv-ch {
+  --i: 0;
+  display: inline-block;
+  animation: flh-ch 1.3s calc(0.55s + var(--i) * 55ms) var(--ease-out) backwards;
+}
+
+@keyframes flh-ch {
+  from {
+    opacity: 0;
+    transform: translateY(0.2em);
+    filter: blur(6px);
+  }
+}
+
+.flh-sv-rule {
+  width: clamp(90px, 14vw, 280px);
+  height: 1px;
+  margin: 0.7em 0 0.8em;
+  background: linear-gradient(90deg, rgba(var(--flh-lit-rgb), 0), rgba(var(--flh-lit-rgb), 0.85), rgba(var(--flh-lit-rgb), 0));
+  box-shadow: 0 0 10px rgba(var(--flh-lit-rgb), 0.4);
+  animation: flh-rule 1.6s calc(0.8s + var(--n) * 55ms) var(--ease-out) backwards;
+}
+
+@keyframes flh-rule {
+  from {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+}
+
+.flh-sv-teach {
+  max-width: 48ch;
+  margin: 0;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-weight: 300;
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  color: rgba(225, 238, 255, 0.88);
+  animation: flh-rise 1.4s calc(1.15s + var(--n) * 55ms) var(--ease-out) backwards;
+}
+
+.flh-sv-stats {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 30px;
+  margin-top: 1.1em;
+  animation: flh-fade 1.2s calc(1.6s + var(--n) * 55ms) var(--ease-soft) backwards;
+}
+
+.flh-sv-stats .flh-stat {
+  align-items: center;
+}
+
+.flh-sv-v {
+  font-size: var(--fs-value);
+  color: var(--fn-text-strong);
+}
+
+.flh-sv-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.flh-sv-mark .flh-mark {
+  font-size: calc(var(--fs-value) * 1.15);
+  animation: flh-mark 1.6s calc(1.9s + var(--n) * 55ms) var(--ease-out) backwards;
+}
+
+.flh-sv-mark .flh-k {
+  color: rgba(var(--flh-gold-rgb), 0.8);
+}
+
+@keyframes flh-mark {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) rotate(-40deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.25) rotate(4deg);
+  }
+}
+
+.flh-sv-note {
+  margin-top: 0.8em;
+  font-size: var(--fs-micro);
+  color: var(--fn-secondary);
+  animation: flh-fade 1.2s calc(1.8s + var(--n) * 55ms) var(--ease-soft) backwards;
+}
+
+.flh-sv-share-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1em;
+  pointer-events: auto;
+  animation: flh-fade 1.2s calc(1.8s + var(--n) * 55ms) var(--ease-soft) backwards;
+}
+
+.flh-sv-share {
+  margin: 0;
+  padding: 8px 14px;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--fn-accent-rgb), 0.16);
+  background: rgba(6, 12, 26, 0.55);
+  font-size: var(--fs-label);
+  line-height: 1.55;
+  color: var(--fn-text);
+  text-align: left;
+  text-shadow: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.flh-sv-copy-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 14px;
+}
+
+.flh-sv-copy-status {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fn-secondary);
+}
+
+.flh-sv-copy-status:empty {
+  display: none;
+}
+
+.flh-sv-copy-status[data-state='ok'] {
+  color: var(--flh-lit);
+}
+
+.flh-sv-copy-status[data-state='failed'] {
+  color: var(--fn-warn);
+}
+
+.flh-sv-next {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--fn-faint);
+}
+
+.flh-sv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 12px;
+  margin-top: 1.3em;
+  pointer-events: auto;
+  animation: flh-rise 1s calc(2s + var(--n) * 55ms) var(--ease-out) backwards;
+}
+
+/* Card buttons: the primary one echoes the Voyage's Launch / Resume button, smaller. */
+.flh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.8em;
+  padding: 0.62em 1.5em;
+  border: 1px solid var(--fn-line-strong);
+  border-radius: 999px;
+  background: rgba(6, 10, 22, 0.4);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: var(--fn-text);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-label);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  text-shadow: none;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.3s var(--ease-soft), background 0.3s var(--ease-soft), box-shadow 0.4s var(--ease-soft),
+    color 0.3s, transform 0.25s var(--ease-out);
+}
+
+.flh-btn:hover {
+  border-color: rgba(var(--fn-accent-rgb), 0.7);
+  color: var(--fn-text-strong);
+}
+
+.flh-btn:active {
+  transform: scale(0.98);
+}
+
+.flh-btn--primary {
+  border-color: rgba(var(--fn-accent-rgb), 0.6);
+  background: linear-gradient(180deg, rgba(var(--fn-accent-rgb), 0.18), rgba(var(--fn-accent-rgb), 0.05));
+  color: var(--fn-text-strong);
+  text-shadow: var(--fn-glow);
+  box-shadow: inset 0 0 16px rgba(var(--fn-accent-rgb), 0.08);
+}
+
+.flh-btn--primary:hover {
+  border-color: rgba(var(--fn-accent-rgb), 0.95);
+  background: linear-gradient(180deg, rgba(var(--fn-accent-rgb), 0.28), rgba(var(--fn-accent-rgb), 0.08));
+  box-shadow: 0 0 26px rgba(var(--fn-accent-rgb), 0.26), inset 0 0 20px rgba(var(--fn-accent-rgb), 0.14);
+}
+
+.flh-btn .kc {
+  height: 1.6em;
+  border-color: rgba(var(--fn-accent-rgb), 0.35);
+  color: var(--fn-secondary);
+  text-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------------------- */
+/* Small viewports & reduced motion                                                          */
+/* ---------------------------------------------------------------------------------------- */
+
+@media (max-width: 860px) {
+  .flh-ch {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .flh-at-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .flh-ch-top {
+    justify-content: flex-start;
+  }
+  .flh-daily-side {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-height: 700px) {
+  .flh-at-sub,
+  .flh-ch-rule {
+    display: none;
+  }
+}
+
+/*
+ * base.css shortens every HUD animation to 0.01 ms; the staged reveals also need their delays
+ * removed, or `backwards` fill would hold elements invisible for the length of the delay.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .flh *,
+  .flh *::before,
+  .flh *::after {
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* ======================================================================================== */
+/* WP M — FirstLightMode tweaks (fade curtain, reticle in lab view / menus)                 */
+/* ======================================================================================== */
+
+/* Level-entry curtain (FirstLightMode.setFade drives the opacity; it never takes pointer events). */
+.flm-fade {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The flight reticle stands down in the lab view, the Atlas, entries and the ceremony. */
+.fn-flight:has(> .fn-mode-layer.flm-no-reticle) > .fn-reticle {
+  opacity: 0;
+  visibility: hidden;
+}

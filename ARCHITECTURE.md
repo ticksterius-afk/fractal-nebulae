@@ -82,7 +82,9 @@ Target machine for tuning: **GTX 1080, 2560×1440 @ 119 Hz, i7-7700K, Chrome/Edg
 | Audio | `src/audio/` (`AudioEngine.ts`, `MusicDirector.ts`, `Deck.ts`, `Harmony.ts`, `profiles.ts`, `layers.ts`, `motifs.ts`, `instruments.ts`, `Sfx.ts`, `reverb.ts`, `control.ts`, `scales.ts`, `util.ts`) |
 | HUD / UI | `src/hud/` (`Hud.ts`, `StartScreen.ts`, `PauseScreen.ts`, `Codex.ts`, `Readouts.ts`, `Markers.ts`, `Messages.ts`, `Reticle.ts`, `controls.ts`, `format.ts`, `dom.ts`), `src/styles/*.css`, `index.html` |
 | Content | `src/content/codex.ts` (CODEX), `facts.ts` (VOID_FACTS, PHYSICS_TIPS), `astro.ts` (derived figures) |
-| Tools (not shipped) | `tools/glsl-check.ts`, `tools/check-all-shaders.ts`, `tools/check-contracts.ts`, `tools/_lead_check.ts`, `tools/cpu-render.ts`, `tools/devtools.js` |
+| Game modes (§10) | `src/game/modes.ts`, `src/game/platform/` (`GameMode.ts` contract, `OverviewCamera.ts`, `save.ts`, `daily.ts`, `share.ts`, `prng.ts`), `src/game/firstlight/` (`types.ts` contract, `world.ts`, `Level.ts`, `Geodesic.ts`, `BeamTracer.ts`, `Solver.ts`, `Reach.ts`, `Generator.ts`, `DailyGen.ts`, `dailyArenas.ts`, `FirstLightMode.ts`, `Placement.ts`, `LabView.ts`, `OverlayFeed.ts`, `Ceremony.ts`, `progress.ts`, `chapters.ts`, `levels/*.ts`, `hud/*`), `src/audio/GameAudio.ts`, `public/daily/firstlight/*.json` |
+| Game overlay (§10.3) | `src/render/game/` (`overlayTypes.ts` contract, `GameOverlayRenderer.ts`, `LineSystem.ts` + `lineShader.ts`, `GlyphSprites.ts` + `glyphShader.ts`, `GameStars.ts`, `LocalFrame.ts`, `overlayMesh.ts`) |
+| Tools (not shipped) | `tools/glsl-check.ts`, `tools/check-all-shaders.ts`, `tools/check-contracts.ts`, `tools/_lead_check.ts`, `tools/cpu-render.ts`, `tools/devtools.js`, `tools/shot-receiver.mjs` (for `devtools.js` `__shot`); First Light: `tools/fl-trace-check.ts`, `fl-check.ts`, `fl-reach.ts` (click-reachability gate used by fl-check; bundled-daily audit `--dailies`, `--bundle YYYY-MM`), `fl-solve.ts`, `fl-preview.ts`, `fl-arenas.ts`, `fl-daily-build.ts`, `fl-daily-check.ts`, `platform-check.ts`, `fl-hud-preview.html/.ts`, `tools/flight/*.mts` |
 | Packaging | `package.json`, `vite.config.ts`, `tsconfig.json`, `start.bat` |
 
 A module owner writes only their own files. If a contract is insufficient, change it here and in
@@ -761,3 +763,140 @@ Palettes, lights and look constants (`NEBULA_LOOK`) are art-directed. Change the
   pause switches toggle it. In full screen Esc is claimed with the Keyboard Lock API, so it only
   pauses (Input releases the pointer itself) and the pause menu stays full screen; holding Esc
   exits (browser safeguard).
+
+---------------------------------------------------------------------------------------------
+
+## 10. Game modes and First Light (added 2026-10-02/03)
+
+The design hand-offs are in `design/` (README, `10-platform.md`, `20-first-light.md`); the build plan,
+ownership and the decisions that refined them are in `design/60-first-light-build.md`. This section
+describes what was built.
+
+### 10.1 Mode shell
+
+* **Contract** `src/game/platform/GameMode.ts`: `GameMode` (`enter`, `update(dt, input, state, paused)`,
+  `exit`, optional `onCursorModeChange`, `onPause`, `pauseActions`, `onEscape`) and `ModeContext` (sim,
+  audio, hud, a DOM `layer`, the canvas, `settings()`, the `overlay`, `cursorMode`, `requestFlight()`,
+  `requestFreeCursor()`, `pause()`, `switchMode()`). Registry and URL / `localStorage` choice:
+  `src/game/modes.ts` (`?mode=firstlight`; `VITE_MODES` can hide modes in a build; switching to the
+  Voyage drops the mode's `level` / `daily` parameters).
+* **The Voyage is "no mode"** (`App.mode === null`); every shell addition is inert then (verified with
+  the flight harnesses, byte-identical output).
+* **Frame order:** `input.poll → sim.update → mode.update → audio → render → hud`. In a mode the App
+  still handles H and M, but not Tab / I.
+* **Cursor modes.** `requestFreeCursor()` releases pointer lock *without* pausing (an "expected unlock"
+  window), Esc in free-cursor flight pauses (`InputFrame.escape`), Resume returns to the cursor mode
+  the pause began in, and a refused lock coming from free stays free and tells the mode. A lock granted
+  after the mode already went free or paused is handed back.
+* **Input additions:** `buttons / pressed / released` bitmasks, `pointer` (free cursor, CSS px),
+  `keyDown / keyPressed(code)`, `mods`, `escape`; `setFreeCursorActive`, `setModeKeys`, `releaseLock`.
+* **Simulation additions:** `setControlPolicy` (hyper, targeting, pulse, glide, voyage, wheel → throttle,
+  fixed throttle), `setArena` (soft bounds in a nebula's local frame: outward motion fades between
+  1.0 and 1.5 R, idle drift home), **puppet mode** (`setPuppet`, `setPuppetPose(pos, quat, ghostClip)`,
+  `teleport`) and `firePulseAt(origin, radius, gain)`. The pulse has a `gain` (`SimState.pulse.gain`,
+  1 in the Voyage) that First Light lowers: a full-strength wavefront inside dense arena gas washes out
+  the whole view.
+* **Puppet instead of a separate view.** The lab-view orbit camera and the cinematic arena entry move
+  the *ship* (collisions and input suspended, velocity derived from the pose change). Renderer, HUD
+  markers, stars, dust, TAA and audio already follow the ship, so the render path did not change.
+  `ghostClip` gives the overview camera the existing x-ray into structure.
+* **Universe:** `setFrozenClock(id, clock)` pins a nebula's animation (params = `animate(base, clock)`,
+  bit-identical to `world.ts frozenParams`, which the Node tools use), so arenas hold still and the
+  tracer, the GPU and the authored solutions agree.
+* **HUD:** `setGameMode(id)` hides the Voyage instruments (speed, location, environment, void facts,
+  target brackets, first-minute hints, banners) and the codex auto-open; `createModeLayer()`,
+  `setPauseMode(actions, controls)`, `flashMessage(text, kind, label)`. The start screen has mode cards;
+  the pause screen shows mode actions, a mode switch and per-mode controls.
+
+### 10.2 First Light
+
+* **Physics** (`Geodesic.ts`, `BeamTracer.ts`, pure TS, no three.js, shared by the browser and Node):
+  the Cartesian Schwarzschild null geodesic of the black-hole shader, `a = −1.5 ρ h² p/|p|⁵`, superposed
+  over point masses (an approximation, documented), integrated kick-drift-kick near masses. Capture
+  inside the photon sphere (1.5 ρ, moving inward), DE-gradient reflection off Pearl Foam / Indra's Web
+  surfaces (×0.7 per bounce; seeds need 0.3), absorption elsewhere, exact segment–sphere seed tests,
+  echo seeds, decimated polylines. Deflection matches the exact Schwarzschild value within 0.4 % for
+  b = 10–200 ρ; the capture threshold lands at 1.0004 b_c. A trace takes ~0.1–0.5 ms.
+  The results are deterministic (positions are quantised to 1e-6 local).
+* **Levels** (`types.ts`, `Level.ts`, `levels/*.ts`, `chapters.ts`): JSON-friendly data in a nebula's
+  local frame (arena, vantage, source, seeds, ρ per size, budget, a known solution, hints, teach line,
+  tip, par). There are three chapters, Bend (bulb), Thread (menger) and Reflect (apollonian), with six
+  levels each.
+* **Gates** (`Solver.ts`, `tools/fl-check.ts`). Every level must pass all of these:
+  * the unlensed beam fails;
+  * the solution works and is legal;
+  * it is minimal (heuristic search over smaller budgets);
+  * accidental solutions are under 1 %;
+  * robust under 5 %-ρ jitter (≥ 90 %);
+  * tolerant under ±0.6 % R view-plane jitter (≥ 70 %);
+  * click-reachable: the game's own placement code run from the vantage (`Reach.ts`, shared by `tools/fl-reach.ts` and the Generator);
+  * path length and bends are in range;
+  * the arena's DE is reliable;
+  * the vantage is in free space.
+
+  `placementIssue()` is the single legality rule for the game and the gates.
+* **Generator / daily** (`Generator.ts`, `Reach.ts`, `DailyGen.ts`, `dailyArenas.ts`):
+  * **Generation:** seeded forward design inside 43 curated arenas across all nine fractal nebulae. It is click-aware: every mass is authored where the click aimed beside its beam lands from the vantage (in the view plane, at the beam-snap depth), so each bend reads as a sideways turn. Every daily then passes the quick reach gate (`Reach.quickReach`: the full gate's plain clicks, flood-filled from the aim) and the solver gates.
+  * **Schedule:** UTC weekday tiers (Mon–Tue one mass … Sat three, Sun a harder arena).
+  * **Delivery:** the next 400 days ship pre-generated as monthly JSON bundles in `public/daily/firstlight/`, and `loadDaily` falls back to identical runtime generation. In the browser that fallback runs in a module worker (`dailyClient.ts` → `dailyWorker.ts`), so a Saturday's seconds of generation never stall rendering, input or the score; without `Worker` support it generates on the main thread.
+* **The mode** (`FirstLightMode.ts` with `Placement.ts`, `LabView.ts`, `OverlayFeed.ts`, `Ceremony.ts`,
+  `progress.ts`):
+  * **States:** Atlas → entering (fade, frozen clock, puppet glide to the vantage) → playing (flight ⇄ lab view) → ceremony → solved.
+  * **Placement:** beam-depth snap (`PLACEMENT.snapFrac`), wheel depth, grab / drag, 50-deep undo.
+  * **Retrace:** full on commit, coarse at ≤ 20 Hz while dragging.
+  * **Saving and helpers:** progress, daily streak and seen tips via `platform/save.ts`; hints in three steps; first-time physics tips.
+  * **Dev hook:** `window.__fl` in dev builds.
+* **HUD** (`hud/FirstLightHud.ts`, `PlayHud.ts`, `AtlasPanel.ts`, `SolvedPanel.ts`, `firstlight.css`):
+  * DOM only, in the Voyage's visual language.
+  * `setPlay` diffs its input, so per-frame calls cost no DOM writes.
+  * The Atlas is keyboard-navigable.
+* **Audio** (`src/audio/GameAudio.ts`), always in the current key:
+  * place, grab and remove cues;
+  * seed notes that climb the scale through a chapter;
+  * capture, reflection, and a ~3 s ignition built from the nebula's motif;
+  * a quiet beam hum, with parameters updated at ≤ 30 Hz.
+
+  Fixed along the way: Tone's `disconnect` from a Param cut every Voyage SFX voice off the score's detune (`DetuneSignal` in `Sfx.ts`).
+
+### 10.3 Game overlay rendering
+
+* **Contract** `src/render/game/overlayTypes.ts`: an `OverlayFrame` of plain buffers in one nebula's
+  LOCAL frame: lines, glyphs, stars, lenses (≤ 8) and accents (≤ 4). The mode mutates it in place;
+  `Renderer.setOverlay()` hands it to the renderer.
+* **Sprite stage:** `GameOverlayRenderer` converts local → world → camera-relative in doubles every
+  frame (allocation-free), then draws:
+  * camera-facing beam ribbons with exact per-fragment log depth and flowing pulses;
+  * SDF glyphs;
+  * spiked star sprites.
+
+  Everything is drawn twice: visible parts (`LessEqual`) at full strength, parts behind structure
+  (`Greater`) × `occludedAlpha`, so the beam reads through walls. The overlay always goes to the
+  separate sprite layer (`spriteRT`), even with TAA off, so the lens warp never bends or blacks out
+  beams. Its programs compile during loading (a "Game overlay" group). On frames with lenses and TAA,
+  the near stars, dust and nebula key stars go to their own layer (`nearRT`, sharing the scene depth),
+  which the composite samples at the lensed position and blacks out inside shadows like the scene;
+  `LayerSumPass` adds `nearRT` + `spriteRT` into one texture so bloom keeps a single sprite input. Frames
+  without lenses (the whole Voyage) take the old path.
+* **Point-mass lenses** (composite, `postShaders.ts`):
+  * **Projection:** the renderer projects each lens to a `ScreenLens`, and `CompositePass.setLenses` uploads `uLensA/B[8]` plus the scene depth texture.
+  * **Warp:** each output pixel behind a lens samples the scene and bloom at β = θ − θ_E²/θ, with θ_E² ∝ (D_s − D)/D_s from the pixel's own depth (sky = ∞), times the lens strength (a placed mass 1 once the arena is revealed, the placement preview 0.45; it fades as the camera nears the capture sphere). The warp is exact inside 2 θ_E and windowed to zero at 4 θ_E (`PP_LENS_WIN_IN/OUT`); the sample offset is clamped to 3 θ_E.
+  * **Einstein radius:** θ_E is 0.55 × the physical √(2ρ/D) (`LENS_EINSTEIN_GAIN` in `GameOverlayRenderer.ts`): the full ring bends ~4.7 shadow radii of nebula around every mass and hides the puzzle, 0.55 keeps it clearly lensed (~2.6). The tracer's physics are unchanged.
+  * **Shadow:** inside the capture radius (2.598 ρ) the pixel is black, with a thin warm photon rim. Both radii are exact on-axis; their off-axis growth D/viewZ is capped at 1.5 (`LENS_OFFAXIS_MAX`, ≈ 48° off-axis), so a mass beside the camera cannot warp the whole view.
+  * **Cost:** zero when no lenses are present.
+* **Accent lights** (`NebulaMaterial`): `uAccentPos/uAccentCol[4]` for the overlay's nebula only.
+  * **Surfaces:** wrap-diffuse with a smooth falloff and a little rim pickup.
+  * **Gas:** a closed-form glow integrated along the visible part of each view ray, never a per-step light loop. `NEBULA_LOOK.accentGas` is 0.06 (a subtle halo; the glow glyph carries the rest).
+  * **Cost:** ≤ 1 % of the nebula pass.
+
+### 10.4 Testing
+
+`npm run check:game` (tracer, platform, all levels, the daily bundles, puppet) and `npm run check:shaders`
+run before every deploy. The bundle guard is `tools/fl-daily-check.ts --fast`: all window days present,
+canonical and on `dailyInfo`'s nebula (a schedule change would otherwise send every visitor to the
+runtime generator, seconds per day), at least 60 bundled days ahead of today (the 400-day
+window ends 2027-11-05), and the loader paths with two tier-1 runtime regenerations that must equal the
+bundle. The full `fl-daily-check` (gates and regeneration of a sample) and `fl-reach --dailies` stay
+manual after a Generator change. The built-in browser pane refuses pointer lock and throttles rAF;
+`tools/devtools.js` `fakeLock()` + `flRig()` (`__playLevel`, `__aim`, `__click`, `__key`, `__run`) drive
+the real input path there; `__shot(name)` saves a canvas JPEG through the local receiver
+`tools/shot-receiver.mjs` (`npm run shots`).

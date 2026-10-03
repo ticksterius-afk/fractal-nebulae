@@ -2,6 +2,11 @@
  * HUD / UI entry point (ARCHITECTURE.md §3.8): start screen, in-flight instruments, target
  * brackets, pulse markers, codex, banners & messages, pause/settings overlay.
  *
+ * Game modes (setGameMode): the Voyage instruments (speed, location, environment, void facts,
+ * target brackets, first-minute hints, region banners, Voyage tips, codex auto-open) stand down;
+ * the reticle, flash queue, pulse markers, perf readout and the pause screen stay. The mode draws
+ * its own HUD into a layer created with createModeLayer().
+ *
  * Performance model: DOM is built up-front (marker pools included); per frame only transforms
  * and opacities are written, and only when they change; text refreshes at ~15 Hz. Layout reads
  * happen at the very start of update() (before any writes) so they never force a sync layout.
@@ -31,22 +36,29 @@ import type {
 } from '../core/types';
 import { PHYSICS_TIPS, VOID_FACTS } from '../content/codex';
 import { CodexPanel, type CodexContext } from './Codex';
+import type { ControlDef } from './controls';
 import { ClassSlot, el } from './dom';
 import { nebulaTypeLine } from './format';
 import { TargetTracker, PulseMarkers, type Viewport } from './Markers';
-import { FlashQueue, HintsOverlay, RegionBanner, VoidFacts } from './Messages';
-import { PauseScreen, type ResumeState } from './PauseScreen';
+import { FlashQueue, HintsOverlay, RegionBanner, VoidFacts, type FlashKind } from './Messages';
+import { PauseScreen, type PauseButton, type ResumeState } from './PauseScreen';
 import { EnvBlock, LocationBlock, PerfReadout, SpeedBlock, WormholeOverlay, zoomDepth } from './Readouts';
 import { Reticle } from './Reticle';
-import { StartScreen } from './StartScreen';
+import { StartScreen, type StartModes } from './StartScreen';
+
+export type { PauseButton } from './PauseScreen';
+export type { StartModeOption, StartModes } from './StartScreen';
 
 export interface HudOptions {
   nebulae: NebulaDef[];
   codex: Record<string, CodexEntry>;
   settings: AppSettings;
-  onLaunch: (quality: QualityName) => void;
+  /** `mode`: the selected start-screen mode card id ('voyage' when there is no choice). */
+  onLaunch: (quality: QualityName, mode: string) => void;
   onResume: () => void;
   onSettingsChange: (s: AppSettings) => void;
+  /** Start-screen mode cards (shown when there are two or more). */
+  modes?: StartModes;
 }
 
 type TipKey = 'hyper' | 'aberration' | 'lensing' | 'timeDilation' | 'wormhole' | 'pulse' | 'scale';
@@ -126,6 +138,8 @@ export class Hud {
   private glideId: string | null = null;
   /** Region entered mid-wormhole (the sim teleports at 50 %): revealed when the transit ends. */
   private pendingRegion: string | null = null;
+  /** Active game mode id (null = the Voyage). */
+  private gameMode: string | null = null;
   private readonly unsubs: (() => void)[] = [];
 
   constructor(root: HTMLElement, opts: HudOptions) {
@@ -158,8 +172,13 @@ export class Hud {
     this.codex = new CodexPanel(flight, opts.codex, this.defs);
 
     this.pause = new PauseScreen(root, this.settings, () => opts.onResume(), (s) => this.onPauseSettings(s));
-    this.start = new StartScreen(root, this.settings.quality, (q) => opts.onLaunch(q), this.settings.fullscreen, (on) =>
-      this.onPauseSettings({ ...this.settings, fullscreen: on }),
+    this.start = new StartScreen(
+      root,
+      this.settings.quality,
+      (q, mode) => opts.onLaunch(q, mode),
+      this.settings.fullscreen,
+      (on) => this.onPauseSettings({ ...this.settings, fullscreen: on }),
+      opts.modes,
     );
 
     this.subscribe();
@@ -219,9 +238,10 @@ export class Hud {
 
     this.perf.update(rdt, stats);
     this.flash.update(fdt);
-    this.hints.update(fdt, this.codex.open);
+    const game = this.gameMode !== null;
+    this.hints.update(fdt, this.codex.open || game);
     const inVoid = state.env.regionId === null && !state.wormhole.active && state.env.blackHoleId === null;
-    this.voidFacts.update(fdt, inVoid);
+    this.voidFacts.update(fdt, inVoid && !game);
 
     if (state.paused || !this.visible) return;
 
@@ -246,7 +266,7 @@ export class Hud {
       this.speed.text(state, this.nameOf, orbiting, glide);
       this.env.update(state, this.nameOf);
       this.wormhole.text(state, this.nameOf);
-      this.watchFirsts(state, nearest);
+      if (!game) this.watchFirsts(state, nearest);
     }
   }
 
@@ -273,7 +293,9 @@ export class Hud {
     // Let the start screen begin its exit before the instruments fade in.
     this.timers.push(
       window.setTimeout(() => this.flightLive.set(true), 450),
-      window.setTimeout(() => this.flash.push('Gravity drive online · the universe is yours to drift', 'info'), 1600),
+      window.setTimeout(() => {
+        if (this.gameMode === null) this.flash.push('Gravity drive online · the universe is yours to drift', 'info');
+      }, 1600),
     );
   }
 
@@ -303,8 +325,52 @@ export class Hud {
     }
   }
 
-  flashMessage(text: string, kind: 'info' | 'warn' = 'info'): void {
-    this.flash.push(text, kind);
+  /** A status line ('info' / 'warn'), or a physics-tip card ('tip', with an optional label). */
+  flashMessage(text: string, kind: FlashKind = 'info', label = ''): void {
+    this.flash.push(text, kind, label);
+  }
+
+  /**
+   * Enter a game mode (id) or return to the Voyage (null): adds `in-game` and `mode-<id>` to the
+   * HUD root, which hides the Voyage-only instruments (see the file header); a non-pinned codex
+   * card closes. Codex toggling stays available through toggleCodex().
+   */
+  setGameMode(id: string | null): void {
+    if (id === this.gameMode) return;
+    if (this.gameMode !== null) this.root.classList.remove(`mode-${this.gameMode}`);
+    this.gameMode = id;
+    this.root.classList.toggle('in-game', id !== null);
+    if (id !== null) {
+      this.root.classList.add(`mode-${id}`);
+      this.voidFacts.hide();
+      this.pendingRegion = null;
+    }
+    if (this.codex.open && !this.codex.pinned) this.codex.close();
+  }
+
+  /** Active game mode id, or null in the Voyage. */
+  get gameModeId(): string | null {
+    return this.gameMode;
+  }
+
+  /**
+   * A fresh `div.fn-mode-layer` for a game mode's HUD, inside the in-flight layer (H hides it, it
+   * fades in with the instruments), above the flight HUD and below the pause / start screens.
+   * `pointer-events: none`; interactive children opt in. The caller removes it when the mode exits.
+   */
+  createModeLayer(): HTMLElement {
+    return el('div', 'fn-mode-layer', this.flight);
+  }
+
+  /** Pause-screen extras: action buttons (mode actions, mode switch) and the controls table (null = Voyage). */
+  setPauseMode(actions: readonly PauseButton[], controls: readonly ControlDef[] | null): void {
+    this.pause.setActions(actions);
+    this.pause.setControls(controls);
+  }
+
+  /** Pause-card footer line (null = the default "Resume re-engages the drive"). */
+  setPauseFooter(text: string | null): void {
+    this.pause.setFooter(text);
   }
 
   /** Not part of the frame contract; releases listeners and DOM. */
@@ -320,7 +386,8 @@ export class Hud {
     this.start.dispose();
     this.pause.dispose();
     this.root.replaceChildren();
-    this.root.classList.remove('fn-hud', 'is-paused');
+    this.root.classList.remove('fn-hud', 'is-paused', 'in-game');
+    if (this.gameMode !== null) this.root.classList.remove(`mode-${this.gameMode}`);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -377,9 +444,12 @@ export class Hud {
     if (s) this.codex.setContent(s.id, s.context);
   }
 
-  /** Show a physics tip once. While the HUD is hidden (H) it is not consumed: it fires next time. */
+  /**
+   * Show a physics tip once. While the HUD is hidden (H) it is not consumed: it fires next time.
+   * Voyage tips stay quiet in game modes (their wording is about the Voyage).
+   */
   private tip(key: TipKey): void {
-    if (this.tipsShown.has(key) || !this.visible) return;
+    if (this.tipsShown.has(key) || !this.visible || this.gameMode !== null) return;
     const text = (PHYSICS_TIPS as Partial<Record<TipKey, string>> | undefined)?.[key];
     if (!text) return;
     this.tipsShown.add(key);
@@ -413,11 +483,13 @@ export class Hud {
       if (this.launched) fn(payload);
     };
     on.push(bus.on('regionEnter', flying(({ id }) => {
+      if (this.gameMode !== null) return; // no banners or codex cards in game modes
       if (this.lastState?.wormhole.active) this.pendingRegion = id;
       else this.onRegionEnter(id);
     })));
     on.push(bus.on('regionExit', flying(({ id }) => {
       if (this.pendingRegion === id) this.pendingRegion = null;
+      if (this.gameMode !== null) return;
       if (this.lastState?.wormhole.active) return; // the tunnel itself says we left
       const name = this.nameOf(id);
       if (name) this.banner.exit(name);
@@ -433,13 +505,14 @@ export class Hud {
       this.autopilotMode = mode;
       this.orbitId = null;
       this.glideId = mode === 'target' ? id : null;
+      if (this.gameMode !== null) return; // a game mode speaks for itself
       if (mode === 'target') this.flash.push(`Gravity-glide → ${this.nameOf(id) ?? 'target'}`, 'info');
       else this.flash.push('Voyage mode · sit back and drift', 'info');
     })));
     on.push(bus.on('autopilotEnd', flying(({ reason }) => {
       const mode = this.autopilotMode;
       this.autopilotMode = null;
-      if (mode === null) return;
+      if (mode === null || this.gameMode !== null) return;
       if (reason === 'arrived' && mode === 'target') {
         this.orbitId = this.lastState?.target.id ?? this.glideId;
         const name = this.nameOf(this.orbitId);
@@ -502,8 +575,8 @@ export class Hud {
     this.target.lock(id, def.name, kind);
     // A lock is always a deliberate act (click, Space-hold, T, a voyage leg) — the sim clears the
     // target silently at launch — so its card opens even right after launch; only region entries
-    // observe the post-launch quiet window.
-    if (this.launched) this.codex.show(id, 'target', true);
+    // observe the post-launch quiet window. Game modes open the codex themselves.
+    if (this.launched && this.gameMode === null) this.codex.show(id, 'target', true);
   }
 
   private onTargetClear(): void {
@@ -518,9 +591,9 @@ export class Hud {
     if (pending !== null && this.lastState?.env.regionId === pending) this.onRegionEnter(pending);
   }
 
-  /** A region card opens by itself only in flight, and never in the first seconds after launch. */
+  /** A region card opens by itself only in Voyage flight, and never in the first seconds after launch. */
   private autoCodexAllowed(): boolean {
-    return this.launched && performance.now() / 1000 - this.launchAt >= LAUNCH_QUIET_S;
+    return this.launched && this.gameMode === null && performance.now() / 1000 - this.launchAt >= LAUNCH_QUIET_S;
   }
 
   private onRegionEnter(id: string): void {

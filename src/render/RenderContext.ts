@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import type { QualityPreset, SimState } from '../core/types';
+import type { AccentLights, OverlayFrame } from './game/overlayTypes';
 
 export interface RenderContext {
   state: SimState;
@@ -30,6 +31,13 @@ export interface RenderContext {
   beta: number;
   velDir: THREE.Vector3;
   skyExposure: number;
+  /** Game overlay of the active mode (null in the Voyage). Set through Renderer.setOverlay. */
+  overlay: OverlayFrame | null;
+  /**
+   * Accent lights for one nebula pass (resolved by the Renderer from the overlay each frame;
+   * count 0 / nebulaId null when there are none). Read by updateNebulaUniforms.
+   */
+  accents: AccentLights;
 }
 
 /** Uniform objects expected by CAMERA_UNIFORMS_GLSL. */

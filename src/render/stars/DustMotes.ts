@@ -138,7 +138,11 @@ export class DustMotes {
     const ship = state.ship.position;
     if (pulse.active && pulse.width > 0) {
       this.pulse.set(pulse.origin.x - ship.x, pulse.origin.y - ship.y, pulse.origin.z - ship.z, pulse.radius);
-      this.pulseW.set(pulse.width, Math.max(0, 1 - pulse.age));
+      // gain: game modes soften pulses fired inside dense arena gas (1 in the Voyage); also keeps a NaN
+      // age off the GPU.
+      const s = 1 - pulse.age;
+      const g = Number.isFinite(pulse.gain) ? Math.min(Math.max(pulse.gain, 0), 1) : 1;
+      this.pulseW.set(pulse.width, s > 0 ? Math.min(s, 1) * g : 0);
     } else {
       this.pulseW.set(1, 0);
     }

@@ -1,10 +1,26 @@
 /**
- * Start screen: title over the live attract-mode render, quality choice, shader-compile
- * progress and the LAUNCH button (also Enter).
+ * Start screen: title over the live attract-mode render, mode choice (Voyage / game modes, shown
+ * when more than one is available), quality choice, shader-compile progress and the LAUNCH button
+ * (also Enter).
  */
 import type { QualityName } from '../core/types';
-import { keyChips } from './controls';
+import { keyChips, VOYAGE_SUMMARY, type ControlSummary } from './controls';
 import { el, markup, TextSlot, TransformSlot } from './dom';
+
+/** A start-screen mode card. */
+export interface StartModeOption {
+  id: string;
+  title: string;
+  tagline: string;
+  /** Footer controls summary while this card is selected. */
+  summary: readonly ControlSummary[];
+}
+
+export interface StartModes {
+  options: readonly StartModeOption[];
+  /** Pre-selected card (?mode= or the remembered choice); falls back to the first option. */
+  initial: string;
+}
 
 const QUALITIES: { id: QualityName; name: string; desc: string }[] = [
   { id: 'low', name: 'Low', desc: 'Laptops & integrated graphics' },
@@ -26,15 +42,6 @@ const HEADPHONES_SVG = `
   <rect x="17" y="13.5" width="4" height="7" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/>
 </svg>`;
 
-const SUMMARY: { keys: string[]; text: string }[] = [
-  { keys: ['MOUSE'], text: 'look' },
-  { keys: ['W', 'A', 'S', 'D'], text: 'fly' },
-  { keys: ['RMB'], text: 'hyper' },
-  { keys: ['LMB'], text: 'target' },
-  { keys: ['Space'], text: 'pulse · hold to glide' },
-  { keys: ['T'], text: 'voyage' },
-  { keys: ['Esc'], text: 'pause' },
-];
 
 export class StartScreen {
   readonly root: HTMLElement;
@@ -44,6 +51,10 @@ export class StartScreen {
   private readonly launchBtn: HTMLButtonElement;
   private readonly btnLabel: TextSlot;
   private readonly radios: HTMLInputElement[] = [];
+  private readonly modeRadios: HTMLInputElement[] = [];
+  private readonly modeOptions: readonly StartModeOption[];
+  private mode: string;
+  private readonly summaryEl: HTMLElement;
   private quality: QualityName;
   private ready = false;
   private launched = false;
@@ -54,13 +65,18 @@ export class StartScreen {
   constructor(
     parent: HTMLElement,
     initialQuality: QualityName,
-    private readonly onLaunch: (q: QualityName) => void,
+    private readonly onLaunch: (q: QualityName, mode: string) => void,
     initialFullscreen = true,
     onFullscreen?: (on: boolean) => void,
+    modes?: StartModes,
   ) {
     // Settings come from localStorage: never trust the stored value to be a known preset.
     if (!QUALITIES.some((q) => q.id === initialQuality)) initialQuality = 'high';
     this.quality = initialQuality;
+    const modeOptions = (this.modeOptions = modes?.options ?? []);
+    const initialMode = modes?.initial;
+    this.mode =
+      initialMode !== undefined && modeOptions.some((m) => m.id === initialMode) ? initialMode : (modeOptions[0]?.id ?? 'voyage');
     const root = (this.root = el('section', 'fn-start', parent));
     root.setAttribute('aria-label', 'Fractal Nebulae');
     el('div', 'st-veil', root);
@@ -78,6 +94,32 @@ export class StartScreen {
     el('div', 'st-rule', center);
     el('p', 'st-sub', center, 'a voyage through infinite structure');
     el('p', 'st-poem', center, POEMS[Math.floor(Math.random() * POEMS.length)]);
+
+    // Mode selector (only when there is a choice): Voyage first, then the game modes.
+    if (modeOptions.length > 1) {
+      const mWrap = el('div', 'st-modes', center);
+      el('div', 'st-section-label', mWrap, 'Mode');
+      const mseg = el('div', 'seg seg--cards seg--modes', mWrap);
+      mseg.setAttribute('role', 'radiogroup');
+      mseg.setAttribute('aria-label', 'Mode');
+      for (const m of modeOptions) {
+        const lab = el('label', 'seg-opt', mseg);
+        const input = el('input', '', lab);
+        input.type = 'radio';
+        input.name = 'fn-start-mode';
+        input.value = m.id;
+        input.checked = m.id === this.mode;
+        input.addEventListener('change', () => {
+          if (!input.checked) return;
+          this.mode = m.id;
+          this.renderSummary();
+        });
+        this.modeRadios.push(input);
+        const face = el('span', 'seg-face', lab);
+        el('span', 'seg-name', face, m.title);
+        el('span', 'seg-desc', face, m.tagline);
+      }
+    }
 
     // Quality selector (segmented radio cards).
     const qWrap = el('div', 'st-quality', center);
@@ -134,12 +176,8 @@ export class StartScreen {
     const phones = el('div', 'st-phones', foot);
     markup(HEADPHONES_SVG, phones);
     el('span', '', phones, 'Headphones recommended · the score is generated live from each nebula');
-    const sum = el('div', 'st-controls', foot);
-    for (const s of SUMMARY) {
-      const item = el('span', 'st-ctl', sum);
-      keyChips(item, s.keys);
-      el('span', 'st-ctl-t', item, s.text);
-    }
+    this.summaryEl = el('div', 'st-controls', foot);
+    this.renderSummary();
 
     window.addEventListener('keydown', this.onKey);
   }
@@ -201,12 +239,25 @@ export class StartScreen {
     this.fsInput.checked = on;
   }
 
+  /** Footer controls summary of the selected mode (rebuilt only when the card changes). */
+  private renderSummary(): void {
+    const sum = this.summaryEl;
+    sum.replaceChildren();
+    const items = this.modeOptions.find((m) => m.id === this.mode)?.summary ?? VOYAGE_SUMMARY;
+    for (const s of items) {
+      const item = el('span', 'st-ctl', sum);
+      keyChips(item, s.keys);
+      el('span', 'st-ctl-t', item, s.text);
+    }
+  }
+
   private launch(): void {
     if (!this.ready || this.launched) return;
     this.launched = true;
     const checked = this.radios.find((r) => r.checked);
     const q = (checked?.value as QualityName | undefined) ?? this.quality;
-    this.onLaunch(q);
+    const mode = this.modeRadios.find((r) => r.checked)?.value ?? this.mode;
+    this.onLaunch(q, mode);
   }
 
   private onKey = (e: KeyboardEvent): void => {

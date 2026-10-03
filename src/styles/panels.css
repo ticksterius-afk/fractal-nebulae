@@ -403,6 +403,49 @@
   text-shadow: none;
 }
 
+/* Game-mode actions (Levels, Restart…) and the mode switch, above the settings. */
+.ps-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0 16px;
+  border-bottom: 1px solid var(--fn-line);
+}
+
+.ps-action {
+  padding: 0.62em 1.5em;
+  border: 1px solid var(--fn-line-strong);
+  border-radius: 999px;
+  background: rgba(6, 12, 26, 0.35);
+  color: var(--fn-text);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-label);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.25s var(--ease-soft), background 0.25s var(--ease-soft), color 0.25s, box-shadow 0.3s;
+}
+
+.ps-action:hover {
+  border-color: rgba(var(--fn-accent-rgb), 0.75);
+  background: linear-gradient(180deg, rgba(var(--fn-accent-rgb), 0.14), rgba(var(--fn-accent-rgb), 0.04));
+  color: var(--fn-text-strong);
+}
+
+.ps-action:focus-visible {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(var(--fn-accent-rgb), 0.75);
+}
+
+/* The mode switch sits apart, at the end of the row, a little quieter. */
+.ps-action--switch {
+  margin-left: auto;
+  border-style: dashed;
+  color: var(--fn-secondary);
+}
+
 .ps-body {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
@@ -468,6 +511,26 @@
   text-transform: uppercase;
   text-align: center;
   color: var(--fn-faint);
+}
+
+/* Short screens (720p / 768p full screen): the mode-action band costs ~62 px, so tighten the
+   vertical rhythm by ~96 px to keep the whole card (footer included) on screen without a scroll. */
+@media (max-height: 800px) {
+  .ps-head {
+    padding-bottom: 12px;
+  }
+  .ps-actions {
+    padding: 10px 0 10px;
+  }
+  .ps-body {
+    padding-top: 14px;
+  }
+  .ps-controls .ctl-list {
+    row-gap: 5px;
+  }
+  .ps-foot {
+    margin-top: 12px;
+  }
 }
 
 @media (max-width: 860px) {

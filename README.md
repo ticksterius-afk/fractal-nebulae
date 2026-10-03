@@ -10,6 +10,11 @@ Mandelbrot set and a Julia set. Every nebula has its own generative score and a 
 explains what the shape is, where it turns up in nature, and a few surprising facts. You can fly
 into any of them and keep diving: there is always finer detail.
 
+It is also the home of **First Light**, a calm puzzle game played inside the same nebulae: one star
+shines, dark seeds wait in the structure, and you place gravitational lenses (point masses that bend
+light exactly as general relativity says) to steer the beam around fractal walls, through tunnels and
+off reflecting pearls until every seed ignites. Pick **Voyage** or **First Light** on the start screen.
+
 ## ▶ Play it in your browser
 
 **<https://ticksterius-afk.github.io/fractal-nebulae/>**
@@ -21,7 +26,7 @@ or **Medium** quality on the start screen. Phones and tablets aren't supported (
 need a mouse and keyboard).
 
 The site is rebuilt and republished automatically on every push to `main`
-(`.github/workflows/deploy.yml`: validate shaders → type-check → build → GitHub Pages).
+(`.github/workflows/deploy.yml`: validate shaders → validate First Light → type-check → build → GitHub Pages).
 
 ## Run it locally
 
@@ -55,6 +60,7 @@ use"; close that program or change `server.port` in `vite.config.ts`.
 | `npm run preview` | Serve `dist/` on <http://localhost:5191> |
 | `npm run typecheck` | TypeScript only |
 | `npm run check:shaders` | Validate every GLSL program offline (also runs before each deploy) |
+| `npm run check:game` | First Light: beam-tracer physics, platform helpers, every authored level, the daily bundles, puppet flight (also runs before each deploy) |
 
 `dist/` uses relative paths, so any static web server can host it, from any folder.
 Opening `dist/index.html` straight from disk doesn't work, because browsers block ES modules on
@@ -104,6 +110,61 @@ Keys are read by position, so WASD sits in the same place on every layout; the l
 US-QWERTY. The pause settings cover render quality (applies live), music and effects volume,
 mouse sensitivity (0.2–3×), field of view (60–100°), invert mouse Y and control hints. They are
 saved in your browser.
+
+## First Light (puzzle)
+
+Choose the **First Light** card on the start screen (or open the page with `?mode=firstlight`) and
+press **Launch**. A first visit starts the first puzzle straight away; after that the **Atlas** opens,
+with the chapters, your progress and the daily puzzle.
+
+**The idea.** Each puzzle is a small arena inside a nebula. One star sends out a beam. Dark seeds
+(ember rings) wait in the structure, and you have a few masses to place. A mass bends light toward
+itself, by α ≈ 2rₛ/b for a pass at distance b (the deflection Eddington measured in 1919), and the
+closer the pass, the harder the bend. Too close, inside about 2.6 rₛ, and the light falls in. Light
+passes through lit seeds, dies on ordinary fractal surfaces, and bounces off the pearls of the Pearl
+Foam and the walls of Indra's Web, losing 30 % at each bounce. Light every seed and they ignite.
+Nothing can go wrong: no timer, no failure. A captured or blocked beam just shows you where the light
+went.
+
+**What you see.**
+* **Beam:** a warm thread with slow pulses flowing away from the star. It stays faintly visible behind walls.
+* **Seeds:** an ember ring brightens as the beam comes close ("almost"); a faint line joins it to the beam's nearest point.
+* **Masses:** lenses that follow the real point-lens equation (with a smaller ring, so the puzzle stays readable): a black shadow with a thin photon rim, and the nebula visibly bent around it.
+* **Lit seeds:** become teal stars and light up the fractal around them.
+
+| Input | Flight (default) | Lab view (Tab) |
+|---|---|---|
+| Mouse | Look | Pointer |
+| W A S D, R F, Q E, Shift | Fly slowly inside the arena | — |
+| Left mouse | Place the selected mass at the preview point; press on a mass to grab it | Place at the cursor and keep dragging; drag a mass in the view plane |
+| Right mouse | Remove the mass under the reticle | Drag to orbit; click a mass to remove it |
+| Wheel | Placement depth (or grab distance) | Zoom; while dragging, move along the cursor ray |
+| Shift while dragging | Precision ×0.2 | Precision ×0.2 |
+| 1 / 2 / 3 | Light / medium / heavy mass | same |
+| X · Z · Shift+Z · C | Remove · undo · redo · clear all (undoable) | same |
+| Tab | Lab view: an orbit camera around the arena, structure in front turns to glass | Back to flight |
+| Backspace | Glide back to the vantage point | Re-frame the arena |
+| Space | Pulse: seeds and masses glow for 10 s | same |
+| ? | Hints, opt-in, in three steps: what to notice, where, the designer's note | same |
+| I · H · M · Esc | Codex card · hide HUD · mute music · pause (Atlas, restart, switch to Voyage) | same |
+
+Placement depth snaps to the beam: when the reticle or cursor passes near the beam, a new mass lands
+beside it at the beam's own depth, so most placements are as simple as pointing at the spot next to
+the light.
+
+**Content.** Three chapters of six puzzles, all open from the start:
+* **Bend** (The Cauliflower): bending, close passes, capture, bends in series.
+* **Thread** (The Menger Lattice): threading tunnels; the last puzzle repeats an earlier junction at one third the scale.
+* **Reflect** (The Pearl Foam): bounces off pearls, mixed with bends.
+
+Solving with the fewest masses earns ✦.
+
+**The daily.** A new puzzle every day at 00:00 UTC, the same for everyone. Mondays and Tuesdays use
+one mass; later in the week brings two, Saturday three, and Sunday a harder arena. Unlimited attempts,
+no score. When you solve it, the result card makes a spoiler-free share line, e.g.
+`First Light #42 · Menger · ◆◆◇  ⚬⚬  1:12`, and counts your streak. The next 400 days are
+pre-generated in `public/daily/firstlight/` (with a runtime fallback), so the site needs no server.
+Progress, streak and seen tips are saved in your browser (`localStorage`).
 
 ## The HUD
 
@@ -222,6 +283,9 @@ design notes. In short:
 | `src/audio/` | Tone.js generative score (profiles, two-deck director, motifs) and sound effects |
 | `src/hud/`, `src/styles/` | DOM HUD, codex card, start and pause screens |
 | `src/content/` | Codex texts, void facts, physics tips (figures derived from the catalogue) |
+| `src/game/` | Game modes: `modes.ts` (registry), `platform/` (mode contract, orbit camera, save, daily, share, PRNG), `firstlight/` (the puzzle: tracer, solver, generator, mode, HUD, levels) |
+| `src/render/game/` | The game overlay: beam ribbons, SDF glyphs, star sprites (lenses and accent lights feed the composite and the nebula shader) |
+| `public/daily/` | Pre-generated First Light dailies (one JSON per month) |
 | `tools/` | Developer tools (not part of the app, see below) |
 
 **Developer tools** (run TypeScript ones with `npx tsx`):
@@ -235,6 +299,20 @@ design notes. In short:
   checks just the shared GLSL; `tools/_lead_check.ts` just the nebula materials at High.
 * `tools/cpu-render.ts`: `renderFractalPNG()`, a CPU raymarch preview of a fractal's JavaScript
   distance estimator written to a PNG (import it from a script).
-* `tools/devtools.js`: a console helper for visual tuning, dev server only. Load it with
+* **First Light tools:**
+  * `tools/fl-trace-check.ts`: beam-tracer physics tests. It checks deflection against exact Schwarzschild, the capture threshold, reflection, seed hits and determinism.
+  * `tools/fl-check.ts`: runs the gates on every authored level. A level must be solvable, minimal and click-reachable, with no accidental solutions, player-sized tolerance, and a free vantage.
+  * `tools/fl-solve.ts`: `generate` / `gates` / `solve` / `arenas` for designing levels.
+  * `tools/fl-preview.ts`: CPU-rendered PNGs of a level from its vantage and a lab angle, with or without the solution.
+  * `tools/fl-arenas.ts`: finds and curates arenas.
+  * `tools/fl-reach.ts`: the click-reachability gate (used by fl-check) and the bundled-daily audit (`--dailies`, `--bundle YYYY-MM`).
+  * `tools/fl-daily-build.ts` and `tools/fl-daily-check.ts`: build and validate the daily bundles. `fl-daily-check --fast` (part of `check:game`) checks that every day of the window is bundled, valid and on schedule, that at least 60 bundled days remain ahead of today, and the loader paths (two quick runtime regenerations must match the bundle).
+  * `tools/platform-check.ts`: tests the orbit camera, daily ids, share string and save.
+  * `tools/flight/*.mts`: the collision-safety and puppet flight harnesses.
+  * `/tools/fl-hud-preview.html` (dev server): the First Light HUD with mock data, every state.
+* `tools/devtools.js`: a console helper for visual tuning, dev server only. `fakeLock()` stands in for
+  pointer lock, which embedded browser panes refuse. `flRig()` adds First Light playtest helpers:
+  `__playLevel(id)`, `__aim`, `__click`, `__key`, `__run`, and `__shot(name)`, which posts a canvas
+  JPEG to `tools/shot-receiver.mjs` (start it with `npm run shots`; it writes to a temp folder). Load it with
   `await import('/tools/devtools.js').then(m => m.setup())`. It relies on `window.__app`, which
   exists only in dev builds.

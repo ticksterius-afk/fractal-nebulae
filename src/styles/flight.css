@@ -1398,3 +1398,23 @@
   color: rgba(160, 190, 220, 0.3);
   text-shadow: none;
 }
+
+/* ---------------------------------------------------------------------------------------- */
+/* Game modes (Hud.setGameMode): the Voyage instruments stand down                          */
+/* ---------------------------------------------------------------------------------------- */
+
+.fn-hud.in-game .fn-speed,
+.fn-hud.in-game .fn-loc,
+.fn-hud.in-game .fn-bl,
+.fn-hud.in-game .fn-target,
+.fn-hud.in-game .fn-hints,
+.fn-hud.in-game .fn-banner {
+  display: none;
+}
+
+/* The active mode's own HUD (ModeContext.layer): above the flight HUD, below pause / start. */
+.fn-mode-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

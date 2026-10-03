@@ -9,7 +9,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "check:shaders": "tsx tools/check-all-shaders.ts"
+    "check:shaders": "tsx tools/check-all-shaders.ts",
+    "check:game": "tsx tools/fl-trace-check.ts && tsx tools/platform-check.ts && tsx tools/fl-check.ts && tsx tools/fl-daily-check.ts --fast && tsx tools/flight/puppet.mts",
+    "shots": "node tools/shot-receiver.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

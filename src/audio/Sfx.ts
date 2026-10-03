@@ -47,8 +47,40 @@ const HEART_VEL = [0.9, 0.8, 0.65, 0.5] as const;
 const VOICE_IDLE = 30;
 const RECLAIM_EVERY = 2; // s
 
-/** A send-equipped output: dry to the sfx bus, a fixed amount to the shared reverb. */
-class Out {
+/**
+ * The native input behind a Tone destination (ToneAudioNode / Param chains resolved), for
+ * disconnect(): Tone's disconnect() follows ToneAudioNode inputs but not Param inputs, and a
+ * Signal's input IS a Param, so `signal.disconnect(voice.detune)` falls through to "disconnect
+ * everything" and cuts every other voice off that signal.
+ */
+export function nativeInput(node: Tone.InputNode): Tone.InputNode {
+  let d: Tone.InputNode = node;
+  for (let i = 0; i < 8 && (d instanceof Tone.ToneAudioNode || d instanceof Tone.Param); i++) {
+    const next: Tone.InputNode | undefined = d.input;
+    if (!next) break;
+    d = next;
+  }
+  return d;
+}
+
+/**
+ * A shared detune signal (cents) whose disconnect(destination) removes only that destination
+ * (see nativeInput). VoicePool.reclaim() disconnects a voice's detune from it: with a plain
+ * Tone.Signal that silently detached every other SFX voice from the score's detune.
+ */
+export class DetuneSignal extends Tone.Signal<'cents'> {
+  constructor(value = 0) {
+    super({ value, units: 'cents' });
+  }
+
+  override disconnect(destination?: Tone.InputNode, outputNum = 0, inputNum = 0): this {
+    if (destination === undefined) return super.disconnect();
+    return super.disconnect(nativeInput(destination), outputNum, inputNum);
+  }
+}
+
+/** A send-equipped output: dry to the sfx bus, a fixed amount to the shared reverb (also used by GameAudio). */
+export class Out {
   readonly node: Tone.Gain;
   private readonly send: Tone.Gain;
   constructor(level: number, reverb: number, dry: Tone.InputNode, wet: Tone.InputNode) {
@@ -73,8 +105,9 @@ export class Sfx {
   /**
    * Pitch of every tonal one-shot, following the music's detune (time dilation, wormhole
    * swirl): a chime in concert pitch over a score bent 300 cents flat would be badly out of tune.
+   * Read-only for others: GameAudio connects its voices to it (AudioEngine.game()).
    */
-  private readonly detune: Tone.Signal<'cents'>;
+  readonly detune: Tone.Signal<'cents'>;
   private readonly gDetune: Glide;
 
   // engine hum
@@ -196,7 +229,7 @@ export class Sfx {
     }
 
     // ---- tonal one-shots (voices are built on first use) ----
-    const det = (this.detune = new Tone.Signal({ value: 0, units: 'cents' }));
+    const det = (this.detune = new DetuneSignal(0));
     this.gDetune = new Glide(det, 0, 0.5);
     this.gDetune.jump(0, now);
     this.bell = new VoicePool('bell', 3, out(0.5, 0.55).node, this.clock, det);

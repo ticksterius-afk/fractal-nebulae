@@ -291,6 +291,11 @@ export interface SimState {
     age: number;
     /** HUD reveal timer: seconds remaining to show all nebula markers. */
     revealTime: number;
+    /**
+     * 0..1 brightness of the wavefront in the nebula shading (1 = the Voyage pulse). Game modes soften
+     * pulses they fire inside dense arena gas, where a full-strength shell washes out the whole view.
+     */
+    gain: number;
   };
   wormhole: {
     active: boolean;

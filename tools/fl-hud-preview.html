@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>First Light HUD preview</title>
+    <style>
+      /* Paint black before the module (and its CSS) arrives. */
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <!-- Dev preview for WP H (src/game/firstlight/hud). Open via the Vite dev server: /tools/fl-hud-preview.html -->
+    <canvas id="bg"></canvas>
+    <div id="hud-root"></div>
+    <div id="dev"></div>
+    <script type="module" src="./fl-hud-preview.ts"></script>
+  </body>
+</html>

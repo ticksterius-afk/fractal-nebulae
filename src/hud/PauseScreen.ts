@@ -1,9 +1,10 @@
 /**
  * Pause overlay: dims and blurs the scene, Resume button, live settings, full controls table.
- * Every settings change is reported immediately through onChange.
+ * Every settings change is reported immediately through onChange. A game mode adds its pause
+ * actions (a row of buttons above the settings, with the mode switch) and its own control rows.
  */
 import type { AppSettings, QualityName } from '../core/types';
-import { controlsList } from './controls';
+import { CONTROLS, SHARED_CONTROLS, controlsList, type ControlDef } from './controls';
 import { el, TextSlot } from './dom';
 
 const QUALITY_OPTIONS: { id: QualityName; name: string }[] = [
@@ -35,6 +36,17 @@ const NON_TEXT_INPUTS = new Set(['range', 'checkbox', 'radio']);
 /** Pointer re-capture status shown on the card (App drives it). */
 export type ResumeState = 'idle' | 'pending' | 'failed';
 
+/** A pause-screen button (game-mode actions such as Levels / Restart, and the mode switch). */
+export interface PauseButton {
+  id: string;
+  label: string;
+  /** 'switch' buttons (change mode) sit after the mode's own actions, styled quieter. */
+  kind?: 'action' | 'switch';
+  run(): void;
+}
+
+const DEFAULT_FOOT = 'Mouse released · Resume re-engages the drive';
+
 const RESUME_TEXT: Record<ResumeState, string> = {
   idle: '',
   pending: 'Engaging the drive…',
@@ -58,6 +70,11 @@ export class PauseScreen {
   private readonly resumeBtn: HTMLButtonElement;
   private readonly statusEl: HTMLElement;
   private readonly status: TextSlot;
+  private readonly actionsEl: HTMLElement;
+  private readonly controlsCol: HTMLElement;
+  private controlsEl: HTMLElement;
+  private controlRows: readonly ControlDef[] | null = null;
+  private readonly foot: TextSlot;
   private shown = false;
   private hideTimer = 0;
 
@@ -90,6 +107,10 @@ export class PauseScreen {
     el('span', '', btn, 'Resume');
     el('span', 'ps-resume-hint', btn, 'Enter');
     btn.addEventListener('click', () => this.onResume());
+
+    // Game-mode actions + mode switch (empty and hidden in a Voyage with a single mode).
+    this.actionsEl = el('div', 'ps-actions', card);
+    this.actionsEl.hidden = true;
 
     const body = el('div', 'ps-body', card);
 
@@ -142,11 +163,11 @@ export class PauseScreen {
     this.fullscreen = this.toggleRow(set, 'Full screen', (on) => this.emit({ ...this.settings, fullscreen: on }));
 
     // ---- controls column ----
-    const ctl = el('div', 'ps-col ps-controls', body);
+    const ctl = (this.controlsCol = el('div', 'ps-col ps-controls', body));
     el('div', 'ps-col-title', ctl, 'Controls');
-    controlsList(ctl, false);
+    this.controlsEl = controlsList(ctl, false);
 
-    el('footer', 'ps-foot', card, 'Mouse released · Resume re-engages the drive');
+    this.foot = new TextSlot(el('footer', 'ps-foot', card), DEFAULT_FOOT);
 
     this.sync(this.settings);
     window.addEventListener('keydown', this.onKey);
@@ -184,6 +205,37 @@ export class PauseScreen {
     this.status.set(RESUME_TEXT[state]);
     this.statusEl.setAttribute('data-state', state);
     this.resumeBtn.setAttribute('aria-busy', state === 'pending' ? 'true' : 'false');
+  }
+
+  /**
+   * Buttons above the settings (game-mode actions first, then 'switch' buttons). Rebuilt on every
+   * call; the App calls it when the pause screen opens and when the mode changes.
+   */
+  setActions(actions: readonly PauseButton[]): void {
+    const wrap = this.actionsEl;
+    wrap.replaceChildren();
+    const ordered = [...actions.filter((a) => a.kind !== 'switch'), ...actions.filter((a) => a.kind === 'switch')];
+    for (const a of ordered) {
+      const b = el('button', `ps-action${a.kind === 'switch' ? ' ps-action--switch' : ''}`, wrap, a.label);
+      b.type = 'button';
+      b.dataset.action = a.id;
+      b.addEventListener('click', () => a.run());
+    }
+    wrap.hidden = ordered.length === 0;
+  }
+
+  /** Controls table: a game mode's rows followed by the shared rows, or the Voyage table (null). */
+  setControls(rows: readonly ControlDef[] | null): void {
+    if (rows === this.controlRows) return;
+    this.controlRows = rows;
+    const next = controlsList(this.controlsCol, false, '', rows ? [...rows, ...SHARED_CONTROLS] : CONTROLS);
+    this.controlsEl.replaceWith(next);
+    this.controlsEl = next;
+  }
+
+  /** Footer line (null: the default "Resume re-engages the drive"). */
+  setFooter(text: string | null): void {
+    this.foot.set(text ?? DEFAULT_FOOT);
   }
 
   /** Reflect externally-changed settings in the controls (no change events fired). */

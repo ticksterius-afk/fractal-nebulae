@@ -50,6 +50,7 @@
 .st-center > :nth-child(5) { animation-delay: 0.9s; }
 .st-center > :nth-child(6) { animation-delay: 1.1s; }
 .st-center > :nth-child(7) { animation-delay: 1.25s; }
+.st-center > :nth-child(8) { animation-delay: 1.4s; }
 
 @keyframes st-in {
   from {
@@ -158,6 +159,25 @@
 
 .st-section-label {
   margin-bottom: 10px;
+}
+
+/* Mode cards (Voyage / game modes), above the quality cards when there is a choice. */
+.st-modes {
+  width: min(780px, 100%);
+  margin-top: clamp(22px, 4.2vh, 56px);
+}
+
+.st-modes + .st-quality {
+  margin-top: clamp(12px, 2.2vh, 28px);
+}
+
+.seg--modes .seg-face {
+  padding: 0.85em 1.1em;
+}
+
+.seg--modes .seg-name {
+  font-size: var(--fs-value);
+  letter-spacing: 0.26em;
 }
 
 .seg--cards .seg-face {
@@ -334,8 +354,19 @@
   .st-poem {
     display: none;
   }
-  .st-quality {
+  .st-quality,
+  .st-modes {
     margin-top: 18px;
+  }
+  .st-modes + .st-quality {
+    margin-top: 10px;
+  }
+}
+
+/* Short screens with mode cards: the mode taglines go (the names stay). */
+@media (max-height: 680px) {
+  .seg--modes .seg-desc {
+    display: none;
   }
 }
 

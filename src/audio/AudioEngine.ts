@@ -4,7 +4,7 @@
  * Signal flow
  *   decks (MusicDirector) ─ dry ─▶ musicDry ▸ low-pass ▸ swirl-panner ▸ musicOut ─┐
  *                        └ wet ─▶ musicWet ▸ low-pass ▸ musicWetOut ─▶ reverb ─┤
- *   Sfx ──────────────── dry ─▶ sfxOut ────────────────────────────────────────┤
+ *   Sfx, GameAudio ───── dry ─▶ sfxOut ────────────────────────────────────────┤
  *                        └ wet ─▶ sfxWetOut ─────────────────────▶ reverb ─┤
  *   master: high-shelf (warmth) ▸ 22 Hz high-pass ▸ glue compressor ▸ limiter(−1 dB) ▸ out
  *
@@ -21,7 +21,7 @@ import { bus } from '../core/events';
 import type { SimState } from '../core/types';
 import { NEBULA_BY_ID } from '../universe/catalog';
 import { Glide } from './control';
-import { type HarmonySnapshot, MusicDirector } from './MusicDirector';
+import { type HarmonySnapshot, MusicDirector, tonicHarmony } from './MusicDirector';
 import { getProfile } from './profiles';
 import { createImpulseResponse } from './reverb';
 import { Sfx, type SfxDrive } from './Sfx';
@@ -80,6 +80,25 @@ interface MasterControls {
   musicWet: Glide;
   sfx: Glide;
   sfxWet: Glide;
+}
+
+/**
+ * What a game mode's sound effects plug into (GameAudio): the SFX buses (so they share the reverb
+ * and follow the SFX volume and mute rules) and the score's harmony (so they stay in key).
+ * Valid while the engine runs; AudioEngine.game() returns a new object after a rebuild, null after
+ * a teardown, so holders compare identities to notice either.
+ */
+export interface GameAudioBus {
+  /** Dry input of the SFX bus (→ SFX volume → master). */
+  readonly dry: Tone.InputNode;
+  /** Reverb send of the SFX bus (→ SFX volume → shared reverb). */
+  readonly wet: Tone.InputNode;
+  /** Pitch shift (cents, audio rate) every tonal SFX follows: time dilation, wormhole swirl. */
+  readonly detune: Tone.Signal<'cents'>;
+  /** The pause screen is open (continuous game sounds duck like the engine hum). */
+  readonly paused: boolean;
+  /** Fills `out` with the chord sounding now (allocation-free). */
+  harmony(out: HarmonySnapshot): void;
 }
 
 /** Profile id for a nebula id (catalog `music`, falling back to the id itself). */
@@ -173,6 +192,7 @@ export class AudioEngine {
   private ctl: MasterControls | null = null;
   private director: MusicDirector | null = null;
   private sfx: Sfx | null = null;
+  private gameBus: GameAudioBus | null = null;
   private unsubscribers: (() => void)[] = [];
 
   // user state
@@ -206,6 +226,11 @@ export class AudioEngine {
   /** Music profile the score is heading to (see MUSIC_PROFILES), or null before start(). */
   get musicProfile(): string | null {
     return this.started ? this.targetProfile : null;
+  }
+
+  /** Hooks for game-mode sound effects (see GameAudioBus), or null before start() resolved / after dispose(). */
+  game(): GameAudioBus | null {
+    return this.started && !this.disposed ? this.gameBus : null;
   }
 
   /** Call from a user gesture. Idempotent; safe to call again after it resolved. */
@@ -286,8 +311,21 @@ export class AudioEngine {
     this.ctl.lp.jump(MUSIC_OPEN_HZ, now);
     this.ctl.lpWet.jump(MUSIC_OPEN_HZ, now);
 
-    this.sfx = new Sfx(n.sfxDry, n.sfxWet);
+    const sfx = (this.sfx = new Sfx(n.sfxDry, n.sfxWet));
     this.director = new MusicDirector(n.musicDry, n.musicWet);
+    const engine = this;
+    this.gameBus = {
+      dry: n.sfxDry,
+      wet: n.sfxWet,
+      detune: sfx.detune,
+      get paused(): boolean {
+        return engine.paused;
+      },
+      harmony(out: HarmonySnapshot): void {
+        if (engine.director) engine.director.harmony(out);
+        else tonicHarmony(engine.targetProfile ?? 'void', out);
+      },
+    };
     if (this.targetProfile) this.director.setDesired(this.targetProfile, CROSSFADE);
     this.director.start();
     this.subscribe();
@@ -515,6 +553,7 @@ export class AudioEngine {
     for (const u of this.unsubscribers) u();
     this.unsubscribers = [];
     this.started = false;
+    this.gameBus = null;
     try {
       this.director?.dispose();
       this.sfx?.dispose();
